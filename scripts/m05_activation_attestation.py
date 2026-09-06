@@ -65,6 +65,9 @@ _PLAYWRIGHT_IMAGE_RE = re.compile(
 _PAIR_PATH = Path(__file__).resolve().parents[1] / (
     "contracts/kor-travel-map-m05-pair-provenance-v1.json"
 )
+#: 이 파일이 여러 곳에서 인용하는 `T-VN-PAIR-V2`의 정본 문서는 **Map 저장소**의
+#: `docs/tasks-acceptance.md` 같은 이름 절이다(§3~§7이 v1 분기 제거 순서와 롤백을
+#: 정한다). 이 저장소에는 없다 — 찾지 못해 코드에서 역추적하는 일이 없도록 여기 적는다.
 #: service 표면의 릴리스 revision **정본**. v1 pair 계약은 이 값을 한 벌 더
 #: 선언했고(`map.service.source_revision`), 그래서 이 문서가 갱신되지 않아도
 #: pair 계약만 바뀌면 두 값이 갈라질 수 있었다. v2는 pair 쪽 사본을 걷어내고
@@ -2111,13 +2114,17 @@ def _runtime_snapshot(
     *,
     pair: dict[str, dict[str, str]],
     source_revision: str,
-    map_source_revision: str,
+    map_admin_revision: str,
     pinvi_image_digests: Mapping[str, str] | None = None,
 ) -> dict[str, dict[str, str]]:
+    # 세 Map 컨테이너의 OCI revision 라벨은 **admin 표면**의 revision과 대조한다.
+    # receipt `_map_pair`도 같은 표면으로 대조하므로 두 단계가 같은 것을 요구한다.
+    # v1 계약은 표면마다 revision이 다를 수 있어서 다른 표면을 쓰면 두 단계가 서로
+    # 모순된 요구를 하게 된다(2차 적대 리뷰).
     return {
         "map_admin": _docker_inspect(
             args.map_admin_container,
-            expected_revision=map_source_revision,
+            expected_revision=map_admin_revision,
             expected_environment=args.scope,
             expected_image_digest=pair["runtime_image_digests"]["admin"],
             expected_compose_project=args.map_docker_project,
@@ -2127,7 +2134,7 @@ def _runtime_snapshot(
         ),
         "map_api": _docker_inspect(
             args.map_api_container,
-            expected_revision=map_source_revision,
+            expected_revision=map_admin_revision,
             expected_environment=args.scope,
             expected_image_digest=pair["runtime_image_digests"]["api"],
             expected_compose_project=args.map_docker_project,
@@ -2135,7 +2142,7 @@ def _runtime_snapshot(
         ),
         "map_frontend": _docker_inspect(
             args.map_frontend_container,
-            expected_revision=map_source_revision,
+            expected_revision=map_admin_revision,
             expected_environment=args.scope,
             expected_image_digest=pair["runtime_image_digests"]["frontend"],
             expected_compose_project=args.map_docker_project,
@@ -2712,7 +2719,7 @@ def _live(args: argparse.Namespace) -> int:
         args,
         pair=pair,
         source_revision=source_revision,
-        map_source_revision=map_source_revision,
+        map_admin_revision=surface_revisions["admin"],
         pinvi_image_digests=pinvi_image_digests,
     )
     m04 = _read_m04_evidence(
@@ -2783,7 +2790,7 @@ def _live(args: argparse.Namespace) -> int:
         args,
         pair=pair,
         source_revision=source_revision,
-        map_source_revision=map_source_revision,
+        map_admin_revision=surface_revisions["admin"],
         pinvi_image_digests=pinvi_image_digests,
     )
     _assert_runtime_snapshots_unchanged(runtime_initial, runtime_before_ui)
@@ -2930,7 +2937,7 @@ def _live(args: argparse.Namespace) -> int:
         args,
         pair=pair,
         source_revision=source_revision,
-        map_source_revision=map_source_revision,
+        map_admin_revision=surface_revisions["admin"],
         pinvi_image_digests=pinvi_image_digests,
     )
     _assert_runtime_snapshots_unchanged(runtime_initial, runtime_after_ui)
@@ -2948,7 +2955,7 @@ def _live(args: argparse.Namespace) -> int:
         args,
         pair=pair,
         source_revision=source_revision,
-        map_source_revision=map_source_revision,
+        map_admin_revision=surface_revisions["admin"],
         pinvi_image_digests=pinvi_image_digests,
     )
     _assert_runtime_snapshots_unchanged(runtime_after_ui, runtime_after_openapi)

@@ -334,6 +334,32 @@ terminal receipt가 없으면 fixture/worker/ACK 상태를 먼저 확인한다.
 activation gate에서는 단독 UI pass가 아니라, 앞 절의 서명된 M04 증적과 `live`의 Map 결정·ACK
 server-side 대조까지 모두 성공해야 한다.
 
+### v2 pair 계약에서 비격리(`--scope staging|production`) 실행
+
+pair 계약이 v2가 되면 계약은 **Map source revision도 runtime image digest도 선언하지
+않는다**(`T-VN-PAIR-V2` — 정본은 `kor-travel-map` 저장소 `docs/tasks-acceptance.md`의 같은
+이름 절이다). 격리 실행은 Manager가 만든 root-owned runtime provenance가 그 값을 싣고
+오지만, 비격리 scope에서는 **운영자가 pin registry에서 가져와 명시적으로 넘겨야 한다**:
+
+```bash
+  --map-source-revision "$MAP_PINNED_REVISION"   --map-admin-image-digest "$MAP_ADMIN_IMAGE_DIGEST"   --map-api-image-digest "$MAP_API_IMAGE_DIGEST"   --map-frontend-image-digest "$MAP_FRONTEND_IMAGE_DIGEST" ```
+
+넷 다 **Manager pin registry**가 정본이다. n150에서:
+
+- revision: `ktdctl pin show`의 Map source revision
+- image digest 셋: 그 pinset의 root-owned `pinned-runtime-rebuild-v8-<pinset>.json`
+  (Map admin/api/frontend의 build 결과 image ID)
+
+하나라도 빠지면 attestation이 **무엇을 배선해야 하는지 이름을 대며** 거절한다. 조용히
+검사를 건너뛰지 않는다.
+
+**이 값들의 보증 범위를 정확히 알아 둘 것.** attestation은 넘겨받은 digest를 실행 중
+컨테이너와 대조한다 — 즉 "지금 떠 있는 것이 pin registry가 의도한 이미지인가"를 보는
+것이고, 그 판정의 근거는 위 문서 하나다. v1 계약이 담고 있던 사본은 독립 앵커처럼
+보였지만 실제로는 두 pinset 낡은 채 방치된 적이 있어 앵커 구실을 못 했다. `docker
+inspect`로 읽은 값을 되돌려 넣으면 자기확인이 되므로, **반드시 pin registry 문서에서**
+가져온다.
+
 `--scope isolated`는 Manager가 root-owned `0600`으로 만든 runtime provenance receipt를 반드시
 함께 받는다. 이 receipt는 exact Map/PinVi source, Map full OpenAPI, 새로 build한 여섯 runtime image
 ID를 고정한다. 기존 canonical runtime image ID를 재사용하거나 production/staging receipt로 바꾸는

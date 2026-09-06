@@ -421,30 +421,51 @@ def test_m05_endpoint_rejects_wildcard_host_binding() -> None:
         )
 
 
-def test_m05_map_checkout_allowlist_uses_only_source_revisions() -> None:
-    """v2 계약은 Map revision을 선언하지 않는다 — 허용 집합의 출처가 하나가 된다.
+def test_m05_map_checkout_allowlist_covers_every_surface_revision() -> None:
+    """Map checkout이 **읽을 표면 전부**의 revision을 담고 있어야 한다.
 
-    v1은 surface마다 revision을 따로 선언해 넷을 허용했다. v2에서 그 선언이 사라지면
-    `_live`가 배선한 값 하나만 허용된다 — 그것이 이중 선언을 없앤다는 말의 실제
-    내용이다(`T-VN-PAIR-V2`).
+    종전 이름과 docstring은 이 테스트가 `_live`의 허용 집합을 본다고 말했지만
+    실제로는 계약 파일 모양만 다시 확인했다(2차 적대 리뷰). 그리고 그 주장 자체가
+    틀렸다 — v2의 허용 집합은 하나가 아니라 둘이다. service 표면은 자기 릴리스
+    revision에서 읽히므로 그 object도 checkout에 있어야 하고, 없으면 하네스가 다
+    돌고 난 뒤 `git show`에서 죽는다.
     """
 
     module = _attestation_module()
     pair, pair_version = module._load_pair()
+    service_release = module._service_release_revision()
+    pinned = "1" * 40
 
-    allowed = {
-        pair[name]["source_revision"]
-        for name in ("admin", "full", "service", "user")
-        if "source_revision" in pair[name]
-    }
-    assert "runtime_image_digests" not in allowed
+    revisions = module._surface_revisions(
+        pair,
+        version=pair_version,
+        map_source_revision=pinned,
+        service_release_revision=service_release,
+    )
+    allowed = set(revisions.values())
 
     if pair_version == 1:
-        assert pair["full"]["source_revision"] in allowed
+        # v1은 계약이 표면마다 선언한다 — 허용 집합도 그것이다.
+        assert allowed == {
+            pair[name]["source_revision"] for name in ("admin", "full", "service", "user")
+        }
     else:
         assert pair_version == 2
-        assert allowed == set(), "v2 계약이 Map revision을 다시 선언한다"
         assert pair["runtime_image_digests"] == {}
+        assert allowed == {pinned, service_release}
+        assert service_release != pinned, "픽스처가 두 값을 구분하지 못한다"
+
+    # `_live`가 그 집합을 그대로 checkout 대조에 넘기는지 — 배선이 끊기면 위의
+    # 계산은 맞는데 실행 경로만 조용히 달라진다.
+    source = (
+        Path(__file__).resolve().parents[4] / "scripts/m05_activation_attestation.py"
+    ).read_text(encoding="utf-8")
+    assert "allowed_revisions=set(surface_revisions.values())," in source
+    # 세 Map 컨테이너의 라벨은 **admin 표면**으로 대조한다 — receipt `_map_pair`도
+    # 같은 표면을 쓴다. 다른 표면으로 배선하면 v1 계약(표면마다 revision이 다를 수
+    # 있다)에서 두 단계가 서로 모순된 요구를 한다(2차 적대 리뷰).
+    assert source.count('map_admin_revision=surface_revisions["admin"],') == 4
+    assert "expected_revision=map_source_revision," not in source
 
 
 def test_playwright_image_reference_accepts_digest_only_or_tagged_digest() -> None:
