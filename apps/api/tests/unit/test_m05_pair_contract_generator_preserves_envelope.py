@@ -71,13 +71,19 @@ def test_the_consumer_accepts_the_generated_contract(
     config._load_m05_pair_provenance()
 
 
-def test_a_v2_envelope_would_break_the_consumer(
+def test_the_consumer_now_reads_a_v2_envelope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """이 게이트가 지키는 위험 자체를 고정한다 — v2를 먹이면 소비자가 죽는다.
+    """소비자가 v2 봉투를 읽는다 — 종전에는 여기서 죽는 것을 고정한 게이트였다.
 
-    소비자가 v2를 받아들이도록 바뀌면 여기서 깨진다. 그때가 봉투 전환을 의도적으로
-    수행할 시점이고, 생성기의 되돌림도 함께 걷어내야 한다.
+    이 테스트의 이전 판(`test_a_v2_envelope_would_break_the_consumer`)은 "v2를 먹이면
+    소비자가 죽는다"를 의도적으로 고정했고, 독스트링이 "소비자가 v2를 받아들이도록
+    바뀌면 여기서 깨진다. 그때가 봉투 전환을 의도적으로 수행할 시점"이라 적었다.
+    2026-09-07이 그때다(`T-VN-PAIR-V2` 해제 조건 §1).
+
+    v2에서 사라지는 두 필드는 **조용히 비워지지 않는다** — surface의 revision 자리는
+    `None`이고 runtime image digest 표는 비며, 그 값을 실제로 쓰는 활성화 경로가
+    무엇을 배선해야 하는지 이름을 대며 fail-close한다.
     """
     from app.core import config
 
@@ -92,5 +98,62 @@ def test_a_v2_envelope_would_break_the_consumer(
     monkeypatch.setattr(
         config, "_m05_pair_provenance_text", lambda: json.dumps(v2, ensure_ascii=False)
     )
-    with pytest.raises(RuntimeError, match="envelope is invalid"):
+    provenance, image_digests, details, version = config._load_m05_pair_provenance()
+    assert version == 2
+    assert image_digests == {}
+    assert set(provenance) == {"admin", "full", "service", "user"}
+    for name, entry in provenance.items():
+        assert entry[0] == committed["map"][name]["openapi_sha256"], name
+        assert entry[1] is None, f"v2는 revision을 선언하지 않는다: {name}"
+    assert set(details) == {"admin", "full", "service", "user"}
+
+
+def test_the_consumer_still_reads_the_committed_v1_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """dual-read다 — v1을 계속 읽어야 한다. 커밋된 계약이 아직 v1이다."""
+
+    from app.core import config
+
+    committed = _committed()
+    monkeypatch.setattr(
+        config, "_m05_pair_provenance_text", lambda: json.dumps(committed, ensure_ascii=False)
+    )
+    provenance, image_digests, _details, version = config._load_m05_pair_provenance()
+    assert version == 1
+    assert set(image_digests) == {"admin", "api", "frontend"}
+    for name, entry in provenance.items():
+        assert entry[1] == committed["map"][name]["source_revision"], name
+
+
+def test_an_unknown_envelope_version_is_still_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """dual-read가 '아무 판이나 받는다'가 되면 안 된다."""
+
+    from app.core import config
+
+    committed = _committed()
+    for version in (0, 3, 99):
+        broken = {**committed, "version": version}
+        monkeypatch.setattr(
+            config, "_m05_pair_provenance_text", lambda b=broken: json.dumps(b, ensure_ascii=False)
+        )
+        with pytest.raises(RuntimeError, match="envelope is invalid"):
+            config._load_m05_pair_provenance()
+
+
+def test_a_v2_envelope_that_still_declares_a_revision_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """v2를 선언하면서 v1 필드를 남기면 거부한다 — Manager도 같은 규칙이다."""
+
+    from app.core import config
+
+    committed = _committed()
+    half = {"map": committed["map"], "version": 2}
+    monkeypatch.setattr(
+        config, "_m05_pair_provenance_text", lambda: json.dumps(half, ensure_ascii=False)
+    )
+    with pytest.raises(RuntimeError, match="entry is invalid"):
         config._load_m05_pair_provenance()
