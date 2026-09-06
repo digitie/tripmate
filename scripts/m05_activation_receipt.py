@@ -1562,6 +1562,32 @@ def _ledger(args: argparse.Namespace) -> int:
         return _ledger_unlocked(args)
 
 
+#: service 표면의 릴리스 revision **정본**. v1 pair 계약은 이 값을 한 벌 더
+#: 선언했고, v2는 그 사본을 걷어내 이 문서를 유일한 생산자로 둔다.
+#: `app/core/config.py`가 receipt의 `map_service_source_revision`을 바로 이 값과
+#: 대조하므로, receipt를 만들 때 여기서 같은 값을 확인한다.
+_SERVICE_PROVENANCE_PATH = Path(__file__).resolve().parents[1] / (
+    "contracts/kor-travel-map-service-provenance-v1.json"
+)
+
+
+def _service_release_revision() -> str:
+    """service 표면의 릴리스 revision을 그 값의 정본 문서에서 읽는다."""
+
+    try:
+        raw = json.loads(
+            _SERVICE_PROVENANCE_PATH.read_bytes(),
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ReceiptError) as exc:
+        raise ReceiptError("Map service provenance file is invalid") from exc
+    document = _object(raw, name="Map service provenance")
+    return _commit(
+        document.get("map_release_revision"),
+        name="service provenance map_release_revision",
+    )
+
+
 def _pair_provenance() -> dict[str, dict[str, str]]:
     try:
         raw = json.loads(_PAIR_PROVENANCE.read_bytes(), object_pairs_hook=_reject_duplicate_keys)
@@ -2336,7 +2362,7 @@ def _map_pair(
     expected: dict[str, dict[str, str]],
     *,
     environment: str,
-) -> dict[str, str]:
+) -> dict[str, object]:
     pair = _object(value, name="Map pair evidence")
     if set(pair) != {
         "admin",
@@ -2351,30 +2377,16 @@ def _map_pair(
         raise ReceiptError("Map pair evidence schema is invalid")
     for name in ("admin", "full", "service", "user"):
         entry = _object(pair[name], name=f"Map pair {name}")
-        if set(entry) != {
-            "openapi_sha256",
-            "runtime_operation_contract_sha256",
-            "source_canonical_sha256",
-            "source_operation_contract_sha256",
-            "source_revision",
-        }:
+        # evidence의 이 네 블록은 attestation이 **계약을 그대로 복사한 것**이다
+        # (`m05_activation_attestation.py`의 `map_pair = {"admin": pair["admin"], ...}`).
+        # 그러므로 기대 키 집합을 여기서 다시 적지 않고 계약에서 **유도**한다 —
+        # v1이면 5키, v2면 `source_revision`이 빠진 4키다. 리터럴로 적어 두면
+        # 계약이 움직일 때 이 자리가 따라오지 않고, 실제로 그렇게 막혀 있었다.
+        if set(entry) != set(expected[name]):
             raise ReceiptError(f"Map pair {name} evidence schema is invalid")
-        # evidence(Manager 산출물)는 v1·v2 모두 surface마다 revision을 싣는다. 계약이
-        # 그것을 두 번째로 선언하던 v1에서만 대조 상대가 있다 — v2는 그 선언을
-        # 걷어냈고 정본이 evidence 하나가 된다(`T-VN-PAIR-V2`).
-        for field in ("openapi_sha256", "source_revision"):
-            if field not in expected[name]:
-                continue
+        for field in entry:
             if entry[field] != expected[name][field]:
                 raise ReceiptError(f"Map pair {name} does not match the vendored provenance")
-        if (
-            entry["runtime_operation_contract_sha256"]
-            != expected[name]["runtime_operation_contract_sha256"]
-            or entry["source_canonical_sha256"] != expected[name]["source_canonical_sha256"]
-            or entry["source_operation_contract_sha256"]
-            != expected[name]["source_operation_contract_sha256"]
-        ):
-            raise ReceiptError(f"Map pair {name} hashes are not pinned to provenance")
     runtime = _object(pair["runtime"], name="Map pair runtime evidence")
     if set(runtime) != {
         "admin_openapi",
@@ -2389,6 +2401,26 @@ def _map_pair(
         raise ReceiptError("Map pair runtime evidence schema is invalid")
     if runtime["full_openapi_sha256"] != expected["full"]["openapi_sha256"]:
         raise ReceiptError("Map runtime OpenAPI does not match the vendored provenance")
+    # 표면마다 **누가 그 revision을 만드는가**. attestation `_surface_revisions`와
+    # 같은 규칙이고, 여기서는 그 규칙대로 만들어졌는지를 확인하는 쪽이다.
+    #
+    #   v1              계약이 스스로 선언했다 — 그 값과 대조한다.
+    #   v2 · service    `contracts/kor-travel-map-service-provenance-v1.json`.
+    #                   `config.py`가 부팅 때 대조하는 값이 바로 이것이다.
+    #   v2 · 나머지 셋   Map pinned revision. evidence 안에서 그것을 말하는 것은
+    #                   세 컨테이너의 OCI revision 라벨이다.
+    map_runtime_revision = _commit(
+        _object(runtime["admin"], name="Map runtime admin").get("source_revision"),
+        name="Map runtime admin.source_revision",
+    )
+    surface_revisions = {
+        name: (
+            expected[name]["source_revision"]
+            if "source_revision" in expected[name]
+            else (_service_release_revision() if name == "service" else map_runtime_revision)
+        )
+        for name in ("admin", "full", "service", "user")
+    }
     runtime_openapi: dict[str, dict[str, object]] = {}
     for surface, provenance_name in (
         ("admin_openapi", "admin"),
@@ -2430,17 +2462,9 @@ def _map_pair(
             != expected[provenance_name]["source_canonical_sha256"]
             or artifact["surface_coverage_sha256"]
             != expected[provenance_name]["runtime_operation_contract_sha256"]
-            # runtime artifact의 revision은 **같은 evidence의 pair 선언**에 묶는다.
-            # v1에서는 둘 다 계약 사본과 같아야 했으니 이 대조는 그때도 참이었고,
-            # v2에서 계약 사본이 사라져도 결박은 남는다 — 사라지는 것은 세 번째
-            # 선언이지 검증이 아니다(`T-VN-PAIR-V2`).
-            or artifact["source_revision"] != pair[provenance_name]["source_revision"]
-            # 계약이 아직 revision을 선언하는 v1에서는 그 사본과도 대조한다.
-            or (
-                "source_revision" in expected[provenance_name]
-                and artifact["source_revision"]
-                != expected[provenance_name]["source_revision"]
-            )
+            # 표면별 revision을 그 값의 **정본**과 대조한다. 사라지는 것은 계약
+            # 사본이지 검증이 아니다(`T-VN-PAIR-V2`, AGENTS.md DO NOT 15).
+            or artifact["source_revision"] != surface_revisions[provenance_name]
         ):
             raise ReceiptError(f"Map runtime {provenance_name} OpenAPI is not bound to the pair")
         _commit(
@@ -2475,14 +2499,10 @@ def _map_pair(
             raise ReceiptError(f"Map runtime {name} source label is not self-consistent")
         if runtime_image["environment"] != environment:
             raise ReceiptError(f"Map runtime {name} environment does not match receipt scope")
-        # 세 컨테이너는 **같은 evidence의 admin surface 선언**에 묶인다. v1에서는
-        # 계약 사본을 경유해 같은 결박이 성립했다 — v2는 경유지만 없앤다.
-        if runtime_image["source_revision"] != pair["admin"]["source_revision"]:
-            raise ReceiptError(f"Map runtime {name} source revision does not match the pair")
-        if (
-            "source_revision" in expected["admin"]
-            and runtime_image["source_revision"] != expected["admin"]["source_revision"]
-        ):
+        # 세 컨테이너는 같은 Map 빌드에서 나온다 — 서로 같은 revision을 말해야
+        # 하고, 그것이 admin 표면이 가리키는 revision이다. v1에서는 계약 사본을
+        # 경유해 같은 결박이 성립했다.
+        if runtime_image["source_revision"] != surface_revisions["admin"]:
             raise ReceiptError(f"Map runtime {name} source revision does not match the pair")
         _digest(runtime_image["digest"], name=f"Map runtime {name}.digest")
         _commit(runtime_image["source_revision"], name=f"Map runtime {name}.source_revision")

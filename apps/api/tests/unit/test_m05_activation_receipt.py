@@ -24,18 +24,14 @@ from app.core.config import (
     KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_M05_ADMIN_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
-    KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_M05_FULL_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_FULL_SOURCE_CANONICAL_SHA256,
-    KOR_TRAVEL_MAP_M05_FULL_SOURCE_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_SERVICE_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_CANONICAL_SHA256,
-    KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_USER_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
-    KOR_TRAVEL_MAP_M05_USER_SOURCE_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_SERVICE_RELEASE_REVISION,
     Settings,
@@ -59,6 +55,10 @@ PINVI_DIGESTS = {
 #: v2 pair 계약은 Map revision과 runtime image digest를 선언하지 않는다
 #: (`T-VN-PAIR-V2`). evidence는 Manager가 만드는 문서이므로, 이 테스트도 계약이
 #: 아니라 **Manager가 줄 법한 값**으로 픽스처를 만든다.
+#: vendored pair 계약. 픽스처의 표면 블록이 여기서 나온다.
+_PAIR_CONTRACT = json.loads(
+    (REPO_ROOT / "contracts/kor-travel-map-m05-pair-provenance-v1.json").read_text(encoding="utf-8")
+)
 _MAP_REVISION = "1" * 40
 _MAP_IMAGE_DIGESTS = {
     "admin": "sha256:" + "1" * 64,
@@ -68,43 +68,21 @@ _MAP_IMAGE_DIGESTS = {
 
 
 def _map_pair_evidence() -> dict[str, object]:
-    """Manager가 만드는 map-pair evidence 한 벌.
+    """attestation이 만드는 map-pair evidence 한 벌.
 
-    계약(v2)이 revision·image digest 사본을 걷어냈으므로, 이 픽스처가 그 값의
-    유일한 출처다 — 변이 게이트가 계약이 아니라 **evidence 내부 결박**을
-    겨냥할 수 있게 함수로 둔다(`T-VN-PAIR-V2`).
+    네 표면 블록은 **vendored 계약에서 그대로** 가져온다 — 실제 생산자가 그렇게
+    한다(`m05_activation_attestation.py`). 그래서 계약이 v1이든 v2든 이 픽스처는
+    자동으로 그 모양을 따르고, 손으로 적은 모양이 결함을 가리는 일이 없다.
     """
     return {
         "admin_image_digest": _MAP_IMAGE_DIGESTS["admin"],
         "api_image_digest": _MAP_IMAGE_DIGESTS["api"],
         "frontend_image_digest": _MAP_IMAGE_DIGESTS["frontend"],
-        "admin": {
-            "openapi_sha256": KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256,
-            "runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_ADMIN_RUNTIME_OPERATION_CONTRACT_SHA256,
-            "source_canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
-            "source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_OPERATION_CONTRACT_SHA256,
-            "source_revision": _MAP_REVISION,
-        },
-        "full": {
-            "openapi_sha256": KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
-            "runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_FULL_RUNTIME_OPERATION_CONTRACT_SHA256,
-            "source_canonical_sha256": KOR_TRAVEL_MAP_M05_FULL_SOURCE_CANONICAL_SHA256,
-            "source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_FULL_SOURCE_OPERATION_CONTRACT_SHA256,
-            "source_revision": _MAP_REVISION,
-        },
-        "service": {
-            "openapi_sha256": KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256,
-            "runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_SERVICE_RUNTIME_OPERATION_CONTRACT_SHA256,
-            "source_canonical_sha256": KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_CANONICAL_SHA256,
-            "source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_OPERATION_CONTRACT_SHA256,
-            "source_revision": KOR_TRAVEL_MAP_SERVICE_RELEASE_REVISION,
-        },
-        "user": {
-            "openapi_sha256": KOR_TRAVEL_MAP_M05_USER_OPENAPI_SHA256,
-            "runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256,
-            "source_canonical_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
-            "source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_OPERATION_CONTRACT_SHA256,
-            "source_revision": _MAP_REVISION,
+        # 네 표면 블록은 attestation이 **계약을 그대로 복사한 것**이다. 손으로
+        # 다시 적으면 실제 생산자가 낼 수 없는 문서를 만들게 되고, 실제로 그렇게
+        # 만든 픽스처가 v2 스키마 결함을 통째로 가리고 있었다(적대 리뷰).
+        **{
+            name: dict(_PAIR_CONTRACT["map"][name]) for name in ("admin", "full", "service", "user")
         },
         "runtime": {
             "admin_openapi": {
@@ -1020,7 +998,13 @@ def test_map_pair_keeps_binding_revisions_and_digests_without_the_contract_copy(
     assert expected["runtime_image_digests"] == {}, "v2 계약은 image digest를 선언하지 않는다"
     assert "source_revision" not in expected["admin"], "v2 계약은 revision을 선언하지 않는다"
 
-    module._map_pair(_map_pair_evidence(), expected, environment="staging")
+    # 픽스처의 표면 블록은 **생산자와 같은 방식**으로 만들어져야 한다. 손으로 적으면
+    # 실제로 존재할 수 없는 문서가 되고, 그 문서가 v2 스키마 결함을 가렸다.
+    baseline = _map_pair_evidence()
+    for name in ("admin", "full", "service", "user"):
+        assert baseline[name] == _PAIR_CONTRACT["map"][name]
+
+    module._map_pair(baseline, expected, environment="staging")
 
     other_revision = "2" * 40
     other_digest = "sha256:" + "4" * 64
@@ -1039,11 +1023,28 @@ def test_map_pair_keeps_binding_revisions_and_digests_without_the_contract_copy(
         evidence["runtime"]["api"]["digest"] = other_digest
         evidence["runtime"]["api"]["image_id"] = other_digest
 
+    def _surface_entry_shape(evidence: dict[str, object]) -> None:
+        # v2 계약에는 없는 키다. evidence가 계약의 사본인 이상 이 모양은 생길 수
+        # 없고, 스키마를 리터럴로 적어 두면 반대로 **정상 모양**이 거부된다.
+        evidence["admin"] = {**evidence["admin"], "source_revision": _MAP_REVISION}
+
+    def _surface_entry_digest(evidence: dict[str, object]) -> None:
+        # evidence의 표면 블록이 계약과 한 필드라도 다르면 거부돼야 한다.
+        evidence["admin"] = {**evidence["admin"], "openapi_sha256": "3" * 64}
+
+    def _service_surface_revision(evidence: dict[str, object]) -> None:
+        # service 표면의 revision을 pinned Map revision으로 채우는 실수 —
+        # 적대 리뷰 P0이 지목한 바로 그것이다.
+        evidence["runtime"]["service_openapi"]["source_revision"] = _MAP_REVISION
+
     for label, mutate in (
         ("runtime OpenAPI artifact revision", _runtime_artifact_revision),
         ("runtime image revision", _runtime_image_revision),
         ("pair image digest", _pair_image_digest),
         ("runtime image digest", _runtime_image_digest),
+        ("surface entry shape", _surface_entry_shape),
+        ("surface entry digest", _surface_entry_digest),
+        ("service surface revision", _service_surface_revision),
     ):
         evidence = _map_pair_evidence()
         mutate(evidence)

@@ -597,6 +597,13 @@ def test_production_reconciliation_accepts_secure_mounted_activation_receipt(
     (
         ("live_ui_e2e", "skipped", "live UI E2E"),
         ("map_service_source_revision", "0" * 40, "Map pair"),
+        # v2 계약이 revision 사본을 걷어낸 세 표면. 대조 상대가 사라진 자리를 비워
+        # 두면 형식조차 보증되지 않고, 세 표면이 서로 다른 Map을 가리켜도 통과한다.
+        # admin·full·user는 하나의 Map revision에서 나온다(적대 리뷰 P2).
+        ("map_full_source_revision", "0" * 40, "not the pinned Map revision"),
+        ("map_user_source_revision", "0" * 40, "not the pinned Map revision"),
+        ("map_admin_source_revision", "z" * 40, "Map source revision is invalid"),
+        ("map_user_source_revision", "1" * 39, "Map source revision is invalid"),
         ("pinvi_source_revision", "0" * 40, "Pinvi source revision"),
         ("pinvi_api_image_digest", "sha256:" + "0" * 64, "image digest"),
     ),

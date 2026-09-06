@@ -1818,6 +1818,33 @@ class Settings(BaseSettings):
                     f"M05 activation receipt terminal binding is invalid: {field}"
                 )
 
+        # 네 revision 필드의 **형식**은 계약 버전과 무관하게 여기서 본다. 종전
+        # 주석은 "payload 스키마 검사가 그대로 한다"고 적었으나 그 검사는 키 집합만
+        # 본다 — v2에서 대조 상대가 사라진 세 필드는 형식조차 보증되지 않고 있었다.
+        for field in (
+            "map_admin_source_revision",
+            "map_full_source_revision",
+            "map_service_source_revision",
+            "map_user_source_revision",
+        ):
+            value = payload[field]
+            if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
+                _raise_redacted_settings_error(
+                    f"M05 activation receipt Map source revision is invalid: {field}"
+                )
+
+        # v2에서 admin·full·user는 **하나의 Map revision**에서 나온다(attestation
+        # `_surface_revisions`가 그렇게 만든다). 계약 사본이 사라진 자리에 그 사실을
+        # 결박해 둔다 — 없어지는 것은 두 번째 선언이지 검사가 아니다. service는
+        # 별도 계약이 정본이라 아래 루프가 그 값과 직접 대조한다.
+        if KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION is None:
+            for field in ("map_full_source_revision", "map_user_source_revision"):
+                if payload[field] != payload["map_admin_source_revision"]:
+                    _raise_redacted_settings_error(
+                        "M05 activation receipt Map surface revision is not the pinned "
+                        f"Map revision: {field}"
+                    )
+
         for field, expected in (
             ("map_admin_openapi_sha256", KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256),
             ("map_full_openapi_sha256", KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256),
@@ -1835,7 +1862,7 @@ class Settings(BaseSettings):
                 # 이 값을 보호하는 것은 계약의 사본이 아니라 **서명 사슬**이다:
                 # pin registry → Manager가 유도 → Ed25519 서명 receipt → 여기서 서명 검증.
                 # 계약이 두 번째로 선언하던 것을 걷어낸 것이지 검사를 잃은 것이 아니다.
-                # 형식 검증(40-hex 등)은 payload 스키마 검사가 그대로 한다.
+                # 형식(40-hex)과 세 표면의 동일성은 바로 위 두 루프가 본다.
                 continue
             if payload[field] != expected:
                 _raise_redacted_settings_error(

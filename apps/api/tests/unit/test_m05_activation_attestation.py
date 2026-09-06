@@ -877,3 +877,53 @@ def test_live_http_failure_diagnostic_never_leaks_request_material() -> None:
         module._http_failure_diagnostic(URLError(_WeirdReason(secret))),
     ):
         assert secret not in produced
+
+
+def test_surface_revisions_names_the_producer_of_every_map_surface() -> None:
+    """v2에서 표면마다 revision을 **누가 만드는가**를 결박한다.
+
+    v1 pair 계약은 네 표면의 revision을 스스로 선언했다. v2는 그 사본을 걷어내므로
+    각 값의 정본을 직접 가리켜야 하는데, 네 표면을 뭉뚱그려 pin registry 값으로
+    채우면 `service`가 틀린다 — 그 값의 정본은
+    `contracts/kor-travel-map-service-provenance-v1.json`이고 PinVi가 컨테이너
+    부팅 때 그 계약과 대조한다(적대 리뷰 P0: 재핀 주기가 달라 실제로 갈라져 있다).
+    """
+
+    module = _attestation_module()
+    repo_root = Path(__file__).resolve().parents[4]
+    service_release = json.loads(
+        (repo_root / "contracts/kor-travel-map-service-provenance-v1.json").read_text(
+            encoding="utf-8"
+        )
+    )["map_release_revision"]
+    assert module._service_release_revision() == service_release
+
+    pinned = "1" * 40
+    v1_pair = {
+        name: {"source_revision": f"{index}" * 40}
+        for index, name in enumerate(("admin", "full", "service", "user"), start=2)
+    }
+
+    v1 = module._surface_revisions(
+        v1_pair,
+        version=1,
+        map_source_revision=pinned,
+        service_release_revision=service_release,
+    )
+    # v1에서는 계약이 정본이다 — 배선된 값이 계약을 덮어써서는 안 된다.
+    assert v1 == {name: entry["source_revision"] for name, entry in v1_pair.items()}
+
+    v2 = module._surface_revisions(
+        {name: {} for name in ("admin", "full", "service", "user")},
+        version=2,
+        map_source_revision=pinned,
+        service_release_revision=service_release,
+    )
+    assert v2 == {
+        "admin": pinned,
+        "full": pinned,
+        "service": service_release,
+        "user": pinned,
+    }
+    # 이 한 줄이 P0의 요지다. service를 pinned Map revision으로 채우면 PinVi가 뜨지 않는다.
+    assert v2["service"] != pinned
