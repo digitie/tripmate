@@ -5,14 +5,14 @@
       "runtime_operation_contract_sha256": "e5d5040e9f15eb600debd52546e2be3c9a0ef5291e278acfaf7466cec97aae51",
       "source_canonical_sha256": "8ab106dca0b1af0c4833fecd4c7138843f0f0876911146b6041c7449f4596372",
       "source_operation_contract_sha256": "e5d5040e9f15eb600debd52546e2be3c9a0ef5291e278acfaf7466cec97aae51",
-      "source_revision": "ab3640f888a383c6df1a2f6e037240865b645aeb"
+      "source_revision": "3c5076a05890b0c5337e63ece7cf6a055bf86203"
     },
     "full": {
       "openapi_sha256": "de41961d04c86225de48259fb86caa18e08efcd9cbd21820cfb3b0d768b6de0c",
       "runtime_operation_contract_sha256": "e5d5040e9f15eb600debd52546e2be3c9a0ef5291e278acfaf7466cec97aae51",
       "source_canonical_sha256": "8ab106dca0b1af0c4833fecd4c7138843f0f0876911146b6041c7449f4596372",
       "source_operation_contract_sha256": "e5d5040e9f15eb600debd52546e2be3c9a0ef5291e278acfaf7466cec97aae51",
-      "source_revision": "ab3640f888a383c6df1a2f6e037240865b645aeb"
+      "source_revision": "3c5076a05890b0c5337e63ece7cf6a055bf86203"
     },
     "service": {
       "openapi_sha256": "99ba6c178bf55401d3e1bb638a01b96f66bbac38d604534aa126a70f4be53d3d",
