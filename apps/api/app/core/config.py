@@ -413,44 +413,74 @@ def _load_service_provenance() -> tuple[str, str, int, int, int, int, int]:
     )
 
 
+#: v1 봉투는 Map revision과 runtime image digest를 **스스로 선언**한다. 그 선언이 pin
+#: registry의 선언과 겹쳐서, Map이 한 줄만 바뀌어도 PinVi 커밋이 강제됐다 — 2026-09-01
+#: 이후 재핀 12건 전부가 rebuild를 끌고 왔고 그중 10건은 상류 OpenAPI가 바이트 동일했다
+#: (`AGENTS.md` DO NOT 15 이중 선언). v2는 그 두 필드를 걷어내고 생산자를 pin registry
+#: 하나로 둔다.
+_M05_PAIR_V1_ENVELOPE_KEYS = {"map", "runtime_image_digests", "version"}
+_M05_PAIR_V2_ENVELOPE_KEYS = {"map", "version"}
+_M05_PAIR_V1_ENTRY_KEYS = {
+    "openapi_sha256",
+    "runtime_operation_contract_sha256",
+    "source_canonical_sha256",
+    "source_operation_contract_sha256",
+    "source_revision",
+}
+_M05_PAIR_V2_ENTRY_KEYS = _M05_PAIR_V1_ENTRY_KEYS - {"source_revision"}
+
+
 def _load_m05_pair_provenance() -> tuple[
-    dict[str, tuple[str, str, str, str]], dict[str, str], dict[str, dict[str, str]]
+    dict[str, tuple[str, str | None, str, str]],
+    dict[str, str],
+    dict[str, dict[str, str]],
+    int,
 ]:
+    """v1·v2 봉투를 모두 읽는다.
+
+    v2에서는 surface의 `source_revision`과 최상위 `runtime_image_digests`가 없다. 그
+    자리를 **조용히 비우지 않는다** — 튜플 자리에는 `None`을 두고, 그 값을 실제로
+    쓰는 활성화 경로는 무엇을 배선해야 하는지 이름을 대며 fail-close한다. 조용히
+    건너뛰면 v2가 검사를 통과시키는 것처럼 보이기 때문이다.
+    """
+
     raw = json.loads(_m05_pair_provenance_text(), object_pairs_hook=_reject_duplicate_json_keys)
-    if (
-        not isinstance(raw, dict)
-        or set(raw) != {"map", "runtime_image_digests", "version"}
-        or type(raw["version"]) is not int
-        or raw["version"] != 1
-    ):
+    if not isinstance(raw, dict) or type(raw.get("version")) is not int:
+        raise RuntimeError("Map M05 pair provenance envelope is invalid")
+    version = raw["version"]
+    if version == 1:
+        expected_envelope = _M05_PAIR_V1_ENVELOPE_KEYS
+        expected_entry = _M05_PAIR_V1_ENTRY_KEYS
+    elif version == 2:
+        expected_envelope = _M05_PAIR_V2_ENVELOPE_KEYS
+        expected_entry = _M05_PAIR_V2_ENTRY_KEYS
+    else:
+        raise RuntimeError("Map M05 pair provenance envelope is invalid")
+    if set(raw) != expected_envelope:
         raise RuntimeError("Map M05 pair provenance envelope is invalid")
     map_value = raw["map"]
     if not isinstance(map_value, dict) or set(map_value) != {"admin", "full", "service", "user"}:
         raise RuntimeError("Map M05 pair provenance inventory is invalid")
 
-    runtime_images = raw["runtime_image_digests"]
-    if not isinstance(runtime_images, dict) or set(runtime_images) != {
-        "admin",
-        "api",
-        "frontend",
-    }:
-        raise RuntimeError("Map M05 runtime image digest inventory is invalid")
-    runtime_image_digests = {
-        name: _required_string(runtime_images, name, r"sha256:[0-9a-f]{64}")
-        for name in ("admin", "api", "frontend")
-    }
+    runtime_image_digests: dict[str, str] = {}
+    if version == 1:
+        runtime_images = raw["runtime_image_digests"]
+        if not isinstance(runtime_images, dict) or set(runtime_images) != {
+            "admin",
+            "api",
+            "frontend",
+        }:
+            raise RuntimeError("Map M05 runtime image digest inventory is invalid")
+        runtime_image_digests = {
+            name: _required_string(runtime_images, name, r"sha256:[0-9a-f]{64}")
+            for name in ("admin", "api", "frontend")
+        }
 
-    result: dict[str, tuple[str, str, str, str]] = {}
+    result: dict[str, tuple[str, str | None, str, str]] = {}
     details: dict[str, dict[str, str]] = {}
     for name in ("admin", "full", "service", "user"):
         entry = map_value[name]
-        if not isinstance(entry, dict) or set(entry) != {
-            "openapi_sha256",
-            "runtime_operation_contract_sha256",
-            "source_canonical_sha256",
-            "source_operation_contract_sha256",
-            "source_revision",
-        }:
+        if not isinstance(entry, dict) or set(entry) != expected_entry:
             raise RuntimeError(f"Map M05 pair provenance entry is invalid: {name}")
         openapi_sha256 = _required_string(entry, "openapi_sha256", r"[0-9a-f]{64}")
         runtime_operation_contract_sha256 = _required_string(
@@ -462,7 +492,11 @@ def _load_m05_pair_provenance() -> tuple[
         source_operation_contract_sha256 = _required_string(
             entry, "source_operation_contract_sha256", r"[0-9a-f]{64}"
         )
-        source_revision = _required_string(entry, "source_revision", r"[0-9a-f]{40}")
+        source_revision = (
+            _required_string(entry, "source_revision", r"[0-9a-f]{40}")
+            if version == 1
+            else None
+        )
         result[name] = (
             openapi_sha256,
             source_revision,
@@ -474,7 +508,7 @@ def _load_m05_pair_provenance() -> tuple[
             "source_operation_contract_sha256": source_operation_contract_sha256,
             "runtime_operation_contract_sha256": runtime_operation_contract_sha256,
         }
-    return result, runtime_image_digests, details
+    return result, runtime_image_digests, details, version
 
 
 def _load_m05_activation_public_key_sha256() -> str:
@@ -545,12 +579,14 @@ def _load_m05_reviewer_agent_ids() -> frozenset[str]:
     _M05_MAP_PAIR_PROVENANCE,
     _M05_MAP_RUNTIME_IMAGE_DIGESTS,
     _M05_MAP_PAIR_DETAILS,
+    _M05_MAP_PAIR_ENVELOPE_VERSION,
 ) = _load_m05_pair_provenance()
 PINVI_M05_ACTIVATION_RECEIPT_PUBLIC_KEY_SHA256 = _load_m05_activation_public_key_sha256()
 PINVI_M05_REVIEWER_AGENT_IDS = _load_m05_reviewer_agent_ids()
-if _M05_MAP_PAIR_PROVENANCE["service"][:2] != (
-    KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256,
-    KOR_TRAVEL_MAP_SERVICE_RELEASE_REVISION,
+if _M05_MAP_PAIR_PROVENANCE["service"][0] != KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256 or (
+    # v2 계약은 revision을 선언하지 않는다 — 그 대조는 pin registry가 소유한다.
+    _M05_MAP_PAIR_ENVELOPE_VERSION == 1
+    and _M05_MAP_PAIR_PROVENANCE["service"][1] != KOR_TRAVEL_MAP_SERVICE_RELEASE_REVISION
 ):
     raise RuntimeError("Map M05 pair service provenance does not match the service provenance")
 (
@@ -601,9 +637,9 @@ KOR_TRAVEL_MAP_M05_SERVICE_RUNTIME_OPERATION_CONTRACT_SHA256 = _M05_MAP_PAIR_DET
 KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256 = _M05_MAP_PAIR_DETAILS["user"][
     "runtime_operation_contract_sha256"
 ]
-KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST = _M05_MAP_RUNTIME_IMAGE_DIGESTS["admin"]
-KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST = _M05_MAP_RUNTIME_IMAGE_DIGESTS["api"]
-KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST = _M05_MAP_RUNTIME_IMAGE_DIGESTS["frontend"]
+KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST = _M05_MAP_RUNTIME_IMAGE_DIGESTS.get("admin")
+KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST = _M05_MAP_RUNTIME_IMAGE_DIGESTS.get("api")
+KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST = _M05_MAP_RUNTIME_IMAGE_DIGESTS.get("frontend")
 
 
 class Settings(BaseSettings):
@@ -1794,6 +1830,15 @@ class Settings(BaseSettings):
             ("map_service_source_revision", KOR_TRAVEL_MAP_SERVICE_RELEASE_REVISION),
             ("map_user_source_revision", KOR_TRAVEL_MAP_M05_USER_SOURCE_REVISION),
         ):
+            if expected is None:
+                # v2 계약은 revision을 선언하지 않는다. 대조를 **건너뛰지 않는다** —
+                # 건너뛰면 v2가 검사를 통과시키는 것처럼 보인다. 생산자(pin registry가
+                # 낸 값을 Manager receipt로 전달)가 배선되기 전까지 활성화를 막는다.
+                _raise_redacted_settings_error(
+                    "M05 activation receipt Map pair field has no contract-side value "
+                    f"under a v2 pair envelope: {field}. Wire the pin-registry revision "
+                    "producer before activating."
+                )
             if payload[field] != expected:
                 _raise_redacted_settings_error(
                     f"M05 activation receipt Map pair field does not match: {field}"
@@ -1855,6 +1900,13 @@ class Settings(BaseSettings):
             ("map_api_image_digest", KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST),
             ("map_frontend_image_digest", KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST),
         ):
+            if expected is None:
+                # 같은 이유로 fail-close한다 — v2 계약에는 runtime image digest가 없다.
+                _raise_redacted_settings_error(
+                    "M05 activation receipt Map image digest has no contract-side value "
+                    f"under a v2 pair envelope: {field}. Wire the pin-registry image "
+                    "digest producer before activating."
+                )
             if payload[field] != expected:
                 _raise_redacted_settings_error(
                     f"M05 activation receipt Map image digest does not match the pinned runtime: {field}"
