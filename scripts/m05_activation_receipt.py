@@ -1626,10 +1626,15 @@ def _pair_provenance() -> dict[str, dict[str, str]]:
                 else {}
             ),
         }
-    result["runtime_image_digests"] = {
-        name: _digest(runtime_images[name], name=f"runtime_image_digests.{name}")
-        for name in ("admin", "api", "frontend")
-    }
+    # v2 계약에는 runtime image digest가 없다 — 그 값의 생산자는 Manager evidence다.
+    result["runtime_image_digests"] = (
+        {
+            name: _digest(runtime_images[name], name=f"runtime_image_digests.{name}")
+            for name in ("admin", "api", "frontend")
+        }
+        if version == 1
+        else {}
+    )
     return result
 
 
@@ -2354,7 +2359,12 @@ def _map_pair(
             "source_revision",
         }:
             raise ReceiptError(f"Map pair {name} evidence schema is invalid")
+        # evidence(Manager 산출물)는 v1·v2 모두 surface마다 revision을 싣는다. 계약이
+        # 그것을 두 번째로 선언하던 v1에서만 대조 상대가 있다 — v2는 그 선언을
+        # 걷어냈고 정본이 evidence 하나가 된다(`T-VN-PAIR-V2`).
         for field in ("openapi_sha256", "source_revision"):
+            if field not in expected[name]:
+                continue
             if entry[field] != expected[name][field]:
                 raise ReceiptError(f"Map pair {name} does not match the vendored provenance")
         if (
@@ -2420,9 +2430,12 @@ def _map_pair(
             != expected[provenance_name]["source_canonical_sha256"]
             or artifact["surface_coverage_sha256"]
             != expected[provenance_name]["runtime_operation_contract_sha256"]
-            # v1 계약은 Map revision을 스스로 선언해서 여기서 대조할 상대가 있었다.
-            # v2는 그 선언을 걷어냈고 정본은 evidence artifact 하나다 — 대조 상대가
-            # 사라지는 것이 v2의 목적이다. 형식 검증은 아래 `_commit`이 계속 한다.
+            # runtime artifact의 revision은 **같은 evidence의 pair 선언**에 묶는다.
+            # v1에서는 둘 다 계약 사본과 같아야 했으니 이 대조는 그때도 참이었고,
+            # v2에서 계약 사본이 사라져도 결박은 남는다 — 사라지는 것은 세 번째
+            # 선언이지 검증이 아니다(`T-VN-PAIR-V2`).
+            or artifact["source_revision"] != pair[provenance_name]["source_revision"]
+            # 계약이 아직 revision을 선언하는 v1에서는 그 사본과도 대조한다.
             or (
                 "source_revision" in expected[provenance_name]
                 and artifact["source_revision"]
@@ -2462,7 +2475,14 @@ def _map_pair(
             raise ReceiptError(f"Map runtime {name} source label is not self-consistent")
         if runtime_image["environment"] != environment:
             raise ReceiptError(f"Map runtime {name} environment does not match receipt scope")
-        if runtime_image["source_revision"] != expected["admin"]["source_revision"]:
+        # 세 컨테이너는 **같은 evidence의 admin surface 선언**에 묶인다. v1에서는
+        # 계약 사본을 경유해 같은 결박이 성립했다 — v2는 경유지만 없앤다.
+        if runtime_image["source_revision"] != pair["admin"]["source_revision"]:
+            raise ReceiptError(f"Map runtime {name} source revision does not match the pair")
+        if (
+            "source_revision" in expected["admin"]
+            and runtime_image["source_revision"] != expected["admin"]["source_revision"]
+        ):
             raise ReceiptError(f"Map runtime {name} source revision does not match the pair")
         _digest(runtime_image["digest"], name=f"Map runtime {name}.digest")
         _commit(runtime_image["source_revision"], name=f"Map runtime {name}.source_revision")
@@ -2494,7 +2514,10 @@ def _map_pair(
         expected["runtime_image_digests"], name="Map expected runtime image digests"
     )
     for name, digest in image_digests.items():
-        if digest != _digest(
+        # v1 계약은 이미지 digest를 스스로 한 벌 더 선언했다. v2는 그 선언을
+        # 걷어냈고 — 정본은 Manager pin registry이고 evidence가 그 산출물이다 —
+        # 여기 남는 결박은 evidence 안의 두 선언(pair ↔ runtime)이다.
+        if name in expected_image_digests and digest != _digest(
             expected_image_digests[name], name=f"Map expected {name} image digest"
         ):
             raise ReceiptError(f"Map {name} image digest does not match the pinned runtime")
