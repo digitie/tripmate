@@ -84,7 +84,7 @@ def test_isolated_runtime_provenance_binds_exact_source_openapi_and_images(
     linux_tmp_path: Path,
 ) -> None:
     module = _attestation_module()
-    pair = module._load_pair()
+    pair, _pair_version = module._load_pair()
     provenance = {
         "kind": "m05-isolated-runtime-provenance-v1",
         "execution_identity_sha256": "d" * 64,
@@ -420,13 +420,29 @@ def test_m05_endpoint_rejects_wildcard_host_binding() -> None:
 
 
 def test_m05_map_checkout_allowlist_uses_only_source_revisions() -> None:
+    """v2 계약은 Map revision을 선언하지 않는다 — 허용 집합의 출처가 하나가 된다.
+
+    v1은 surface마다 revision을 따로 선언해 넷을 허용했다. v2에서 그 선언이 사라지면
+    `_live`가 배선한 값 하나만 허용된다 — 그것이 이중 선언을 없앤다는 말의 실제
+    내용이다(`T-VN-PAIR-V2`).
+    """
+
     module = _attestation_module()
-    pair = module._load_pair()
+    pair, pair_version = module._load_pair()
 
-    allowed = {pair[name]["source_revision"] for name in ("admin", "full", "service", "user")}
-
+    allowed = {
+        pair[name]["source_revision"]
+        for name in ("admin", "full", "service", "user")
+        if "source_revision" in pair[name]
+    }
     assert "runtime_image_digests" not in allowed
-    assert pair["full"]["source_revision"] in allowed
+
+    if pair_version == 1:
+        assert pair["full"]["source_revision"] in allowed
+    else:
+        assert pair_version == 2
+        assert allowed == set(), "v2 계약이 Map revision을 다시 선언한다"
+        assert pair["runtime_image_digests"] == {}
 
 
 def test_playwright_image_reference_accepts_digest_only_or_tagged_digest() -> None:

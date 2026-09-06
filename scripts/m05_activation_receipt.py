@@ -2503,6 +2503,13 @@ def _map_pair(
             raise ReceiptError(f"Map {name} image digest is not bound to its runtime")
     return {
         "admin_image_digest": image_digests["admin"],
+        # v2 계약은 Map revision을 선언하지 않는다. 그 값은 Manager가 만든 evidence
+        # artifact에 있고, 여기서 그대로 실어 준다 — receipt payload가 그것을 담고
+        # Ed25519 서명이 보호한다(`T-VN-PAIR-V2`).
+        "source_revisions": {
+            surface: runtime_openapi[f"{surface}_openapi"]["source_revision"]
+            for surface in ("admin", "full", "service", "user")
+        },
         "map_admin_container_id": runtime["admin"]["container_id"],
         "admin_runtime_openapi_sha256": _sha256(
             runtime_openapi["admin_openapi"]["transport_sha256"],
@@ -3023,7 +3030,7 @@ def _create(args: argparse.Namespace) -> int:
         "map_admin_source_operation_contract_sha256": pair_expected["admin"][
             "source_operation_contract_sha256"
         ],
-        "map_admin_source_revision": pair_expected["admin"]["source_revision"],
+        "map_admin_source_revision": map_pair["source_revisions"]["admin"],
         "map_admin_image_digest": map_pair["admin_image_digest"],
         "map_admin_container_id": map_pair["map_admin_container_id"],
         "map_api_image_digest": map_pair["api_image_digest"],
@@ -3038,7 +3045,7 @@ def _create(args: argparse.Namespace) -> int:
         "map_full_source_operation_contract_sha256": pair_expected["full"][
             "source_operation_contract_sha256"
         ],
-        "map_full_source_revision": pair_expected["full"]["source_revision"],
+        "map_full_source_revision": map_pair["source_revisions"]["full"],
         "map_pair_evidence_sha256": evidence_hashes["map_pair"],
         "map_service_openapi_sha256": pair_expected["service"]["openapi_sha256"],
         "map_service_runtime_openapi_sha256": map_pair["service_runtime_openapi_sha256"],
@@ -3048,7 +3055,7 @@ def _create(args: argparse.Namespace) -> int:
         "map_service_source_operation_contract_sha256": pair_expected["service"][
             "source_operation_contract_sha256"
         ],
-        "map_service_source_revision": pair_expected["service"]["source_revision"],
+        "map_service_source_revision": map_pair["source_revisions"]["service"],
         "map_user_openapi_sha256": pair_expected["user"]["openapi_sha256"],
         "map_user_runtime_openapi_sha256": map_pair["user_runtime_openapi_sha256"],
         "map_user_runtime_operation_contract_sha256": map_pair[
@@ -3057,7 +3064,7 @@ def _create(args: argparse.Namespace) -> int:
         "map_user_source_operation_contract_sha256": pair_expected["user"][
             "source_operation_contract_sha256"
         ],
-        "map_user_source_revision": pair_expected["user"]["source_revision"],
+        "map_user_source_revision": map_pair["source_revisions"]["user"],
         "pinvi_api_image_digest": pinvi_images["api"],
         "pinvi_api_container_id": pinvi_images["api_container_id"],
         "pinvi_dagster_image_digest": pinvi_images["dagster"],

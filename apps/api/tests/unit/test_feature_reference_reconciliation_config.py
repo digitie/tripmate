@@ -15,23 +15,17 @@ from pydantic import ValidationError
 
 from app.core import config as config_module
 from app.core.config import (
-    KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST,
     KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_M05_ADMIN_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_OPERATION_CONTRACT_SHA256,
-    KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-    KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST,
-    KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST,
     KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_M05_FULL_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_FULL_SOURCE_OPERATION_CONTRACT_SHA256,
-    KOR_TRAVEL_MAP_M05_FULL_SOURCE_REVISION,
     KOR_TRAVEL_MAP_M05_SERVICE_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_USER_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_USER_SOURCE_OPERATION_CONTRACT_SHA256,
-    KOR_TRAVEL_MAP_M05_USER_SOURCE_REVISION,
     KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_SERVICE_RELEASE_REVISION,
     Settings,
@@ -180,6 +174,17 @@ def _production_settings(**overrides: object) -> Settings:
     return Settings(_env_file=None, pinvi_environment="production", **overrides)  # type: ignore[arg-type]
 
 
+#: v2 pair 계약은 Map revision과 runtime image digest를 선언하지 않는다
+#: (`T-VN-PAIR-V2`). 그 값의 생산자는 pin registry이고, PinVi에는 **서명된 receipt**가
+#: 실어 온다 — 그래서 이 테스트도 계약이 아니라 receipt 쪽 값으로 payload를 만든다.
+_MAP_REVISION = "1" * 40
+_MAP_IMAGE_DIGESTS = {
+    "admin": "sha256:" + "1" * 64,
+    "api": "sha256:" + "2" * 64,
+    "frontend": "sha256:" + "3" * 64,
+}
+
+
 def _receipt_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "activation_expires_at": int(time.time()) + 3600,
@@ -247,18 +252,18 @@ def _receipt_payload(**overrides: object) -> dict[str, object]:
         "map_admin_runtime_openapi_sha256": "9" * 64,
         "map_admin_runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_ADMIN_RUNTIME_OPERATION_CONTRACT_SHA256,
         "map_admin_source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_OPERATION_CONTRACT_SHA256,
-        "map_admin_source_revision": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-        "map_admin_image_digest": KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST,
+        "map_admin_source_revision": _MAP_REVISION,
+        "map_admin_image_digest": _MAP_IMAGE_DIGESTS["admin"],
         "map_admin_container_id": "a" * 64,
-        "map_api_image_digest": KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST,
+        "map_api_image_digest": _MAP_IMAGE_DIGESTS["api"],
         "map_api_container_id": "b" * 64,
-        "map_frontend_image_digest": KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST,
+        "map_frontend_image_digest": _MAP_IMAGE_DIGESTS["frontend"],
         "map_frontend_container_id": "c" * 64,
         "map_full_openapi_sha256": KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
         "map_full_runtime_openapi_sha256": "8" * 64,
         "map_full_runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_FULL_RUNTIME_OPERATION_CONTRACT_SHA256,
         "map_full_source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_FULL_SOURCE_OPERATION_CONTRACT_SHA256,
-        "map_full_source_revision": KOR_TRAVEL_MAP_M05_FULL_SOURCE_REVISION,
+        "map_full_source_revision": _MAP_REVISION,
         "map_pair_evidence_sha256": "c" * 64,
         "map_service_openapi_sha256": KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256,
         "map_service_runtime_openapi_sha256": "a" * 64,
@@ -269,7 +274,7 @@ def _receipt_payload(**overrides: object) -> dict[str, object]:
         "map_user_runtime_openapi_sha256": "b" * 64,
         "map_user_runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256,
         "map_user_source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_OPERATION_CONTRACT_SHA256,
-        "map_user_source_revision": KOR_TRAVEL_MAP_M05_USER_SOURCE_REVISION,
+        "map_user_source_revision": _MAP_REVISION,
         "pinvi_api_image_digest": IMAGE_DIGESTS["pinvi_api_image_digest"],
         "pinvi_api_container_id": "d" * 64,
         "pinvi_dagster_image_digest": IMAGE_DIGESTS["pinvi_dagster_image_digest"],
