@@ -1557,7 +1557,10 @@ def _git_blob(source_root: Path, *, revision: str, relative_path: str) -> bytes:
 
 
 def _hash_source_openapi(
-    source_root: Path, *, map_source_revision: str
+    source_root: Path,
+    *,
+    expected: dict[str, dict[str, str]],
+    map_source_revision: str,
 ) -> dict[str, str]:
     paths = {
         "admin": "packages/kor-travel-map-api/openapi.json",
@@ -2859,7 +2862,7 @@ def _live(args: argparse.Namespace) -> int:
     _assert_runtime_snapshots_unchanged(runtime_initial, runtime_after_ui)
 
     source_openapi = _hash_source_openapi(
-        args.map_source_root, map_source_revision=map_source_revision
+        args.map_source_root, expected=pair, map_source_revision=map_source_revision
     )
     runtime_map_openapi = _runtime_map_openapi(
         map_admin_url=args.map_admin_url,
