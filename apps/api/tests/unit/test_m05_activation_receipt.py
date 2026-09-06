@@ -21,19 +21,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app.core import config as config_module
 from app.core.config import (
-    KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST,
     KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_M05_ADMIN_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
     KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_OPERATION_CONTRACT_SHA256,
-    KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-    KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST,
-    KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST,
     KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_M05_FULL_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_FULL_SOURCE_CANONICAL_SHA256,
     KOR_TRAVEL_MAP_M05_FULL_SOURCE_OPERATION_CONTRACT_SHA256,
-    KOR_TRAVEL_MAP_M05_FULL_SOURCE_REVISION,
     KOR_TRAVEL_MAP_M05_SERVICE_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_CANONICAL_SHA256,
     KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_OPERATION_CONTRACT_SHA256,
@@ -41,7 +36,6 @@ from app.core.config import (
     KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
     KOR_TRAVEL_MAP_M05_USER_SOURCE_OPERATION_CONTRACT_SHA256,
-    KOR_TRAVEL_MAP_M05_USER_SOURCE_REVISION,
     KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_SERVICE_RELEASE_REVISION,
     Settings,
@@ -60,6 +54,16 @@ PINVI_DIGESTS = {
     "api": "sha256:" + "1" * 64,
     "web": "sha256:" + "2" * 64,
     "dagster": "sha256:" + "3" * 64,
+}
+
+#: v2 pair 계약은 Map revision과 runtime image digest를 선언하지 않는다
+#: (`T-VN-PAIR-V2`). evidence는 Manager가 만드는 문서이므로, 이 테스트도 계약이
+#: 아니라 **Manager가 줄 법한 값**으로 픽스처를 만든다.
+_MAP_REVISION = "1" * 40
+_MAP_IMAGE_DIGESTS = {
+    "admin": "sha256:" + "1" * 64,
+    "api": "sha256:" + "2" * 64,
+    "frontend": "sha256:" + "3" * 64,
 }
 
 
@@ -576,22 +580,22 @@ def test_m05_signer_seals_checked_evidence_and_settings_accepts_it(
     _write_json(
         evidence_dir / "map-pair.json",
         {
-            "admin_image_digest": KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST,
-            "api_image_digest": KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST,
-            "frontend_image_digest": KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST,
+            "admin_image_digest": _MAP_IMAGE_DIGESTS["admin"],
+            "api_image_digest": _MAP_IMAGE_DIGESTS["api"],
+            "frontend_image_digest": _MAP_IMAGE_DIGESTS["frontend"],
             "admin": {
                 "openapi_sha256": KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256,
                 "runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_ADMIN_RUNTIME_OPERATION_CONTRACT_SHA256,
                 "source_canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
                 "source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_OPERATION_CONTRACT_SHA256,
-                "source_revision": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
+                "source_revision": _MAP_REVISION,
             },
             "full": {
                 "openapi_sha256": KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
                 "runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_FULL_RUNTIME_OPERATION_CONTRACT_SHA256,
                 "source_canonical_sha256": KOR_TRAVEL_MAP_M05_FULL_SOURCE_CANONICAL_SHA256,
                 "source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_FULL_SOURCE_OPERATION_CONTRACT_SHA256,
-                "source_revision": KOR_TRAVEL_MAP_M05_FULL_SOURCE_REVISION,
+                "source_revision": _MAP_REVISION,
             },
             "service": {
                 "openapi_sha256": KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256,
@@ -605,13 +609,13 @@ def test_m05_signer_seals_checked_evidence_and_settings_accepts_it(
                 "runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256,
                 "source_canonical_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
                 "source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_OPERATION_CONTRACT_SHA256,
-                "source_revision": KOR_TRAVEL_MAP_M05_USER_SOURCE_REVISION,
+                "source_revision": _MAP_REVISION,
             },
             "runtime": {
                 "admin_openapi": {
                     "canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
                     "source_canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
-                    "source_revision": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
+                    "source_revision": _MAP_REVISION,
                     "source_sha256": KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256,
                     "surface_coverage_sha256": KOR_TRAVEL_MAP_M05_ADMIN_RUNTIME_OPERATION_CONTRACT_SHA256,
                     "transport": "http",
@@ -619,42 +623,42 @@ def test_m05_signer_seals_checked_evidence_and_settings_accepts_it(
                 },
                 "api": {
                     "container_id": "b" * 64,
-                    "digest": KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST,
+                    "digest": _MAP_IMAGE_DIGESTS["api"],
                     "environment": "staging",
-                    "image_id": KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST,
+                    "image_id": _MAP_IMAGE_DIGESTS["api"],
                     "compose_project": "map-m05",
                     "compose_service": "api",
-                    "revision_label": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-                    "source_revision": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
+                    "revision_label": _MAP_REVISION,
+                    "source_revision": _MAP_REVISION,
                     "started_at": "2026-08-23T00:00:00.000000000Z",
                 },
                 "admin": {
                     "container_id": "a" * 64,
-                    "digest": KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST,
+                    "digest": _MAP_IMAGE_DIGESTS["admin"],
                     "environment": "staging",
-                    "image_id": KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST,
+                    "image_id": _MAP_IMAGE_DIGESTS["admin"],
                     "compose_project": "map-m05",
                     "compose_service": "admin",
-                    "revision_label": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-                    "source_revision": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
+                    "revision_label": _MAP_REVISION,
+                    "source_revision": _MAP_REVISION,
                     "started_at": "2026-08-23T00:00:00.000000000Z",
                 },
                 "frontend": {
                     "container_id": "c" * 64,
-                    "digest": KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST,
+                    "digest": _MAP_IMAGE_DIGESTS["frontend"],
                     "environment": "staging",
-                    "image_id": KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST,
+                    "image_id": _MAP_IMAGE_DIGESTS["frontend"],
                     "compose_project": "map-m05",
                     "compose_service": "frontend",
-                    "revision_label": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-                    "source_revision": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
+                    "revision_label": _MAP_REVISION,
+                    "source_revision": _MAP_REVISION,
                     "started_at": "2026-08-23T00:00:00.000000000Z",
                 },
                 "full_openapi_sha256": KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
                 "full_openapi": {
                     "canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
                     "source_canonical_sha256": KOR_TRAVEL_MAP_M05_FULL_SOURCE_CANONICAL_SHA256,
-                    "source_revision": KOR_TRAVEL_MAP_M05_FULL_SOURCE_REVISION,
+                    "source_revision": _MAP_REVISION,
                     "source_sha256": KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
                     "surface_coverage_sha256": KOR_TRAVEL_MAP_M05_FULL_RUNTIME_OPERATION_CONTRACT_SHA256,
                     "transport": "http",
@@ -672,7 +676,7 @@ def test_m05_signer_seals_checked_evidence_and_settings_accepts_it(
                 "user_openapi": {
                     "canonical_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
                     "source_canonical_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
-                    "source_revision": KOR_TRAVEL_MAP_M05_USER_SOURCE_REVISION,
+                    "source_revision": _MAP_REVISION,
                     "source_sha256": KOR_TRAVEL_MAP_M05_USER_OPENAPI_SHA256,
                     "surface_coverage_sha256": KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256,
                     "transport": "source-artifact",

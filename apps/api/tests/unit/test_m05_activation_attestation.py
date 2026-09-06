@@ -94,7 +94,9 @@ def test_isolated_runtime_provenance_binds_exact_source_openapi_and_images(
             "api_image_id": "sha256:" + "2" * 64,
             "frontend_image_id": "sha256:" + "3" * 64,
             "full_openapi_sha256": pair["full"]["openapi_sha256"],
-            "source_revision": pair["full"]["source_revision"],
+            # v2 계약은 revision을 선언하지 않는다 — envelope이 그 값의 정본이다
+            # (`T-VN-PAIR-V2`). v1이면 계약값과 같아야 하므로 그것을 그대로 쓴다.
+            "source_revision": pair["full"].get("source_revision", "a" * 40),
         },
         "pinset_sha256": "e" * 64,
         "pinvi": {
