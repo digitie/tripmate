@@ -21,27 +21,17 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app.core import config as config_module
 from app.core.config import (
-    KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST,
     KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_M05_ADMIN_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
-    KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_OPERATION_CONTRACT_SHA256,
-    KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-    KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST,
-    KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST,
     KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_M05_FULL_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_FULL_SOURCE_CANONICAL_SHA256,
-    KOR_TRAVEL_MAP_M05_FULL_SOURCE_OPERATION_CONTRACT_SHA256,
-    KOR_TRAVEL_MAP_M05_FULL_SOURCE_REVISION,
     KOR_TRAVEL_MAP_M05_SERVICE_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_CANONICAL_SHA256,
-    KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_USER_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256,
     KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
-    KOR_TRAVEL_MAP_M05_USER_SOURCE_OPERATION_CONTRACT_SHA256,
-    KOR_TRAVEL_MAP_M05_USER_SOURCE_REVISION,
     KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256,
     KOR_TRAVEL_MAP_SERVICE_RELEASE_REVISION,
     Settings,
@@ -61,6 +51,112 @@ PINVI_DIGESTS = {
     "web": "sha256:" + "2" * 64,
     "dagster": "sha256:" + "3" * 64,
 }
+
+#: v2 pair 계약은 Map revision과 runtime image digest를 선언하지 않는다
+#: (`T-VN-PAIR-V2`). evidence는 Manager가 만드는 문서이므로, 이 테스트도 계약이
+#: 아니라 **Manager가 줄 법한 값**으로 픽스처를 만든다.
+#: vendored pair 계약. 픽스처의 표면 블록이 여기서 나온다.
+_PAIR_CONTRACT = json.loads(
+    (REPO_ROOT / "contracts/kor-travel-map-m05-pair-provenance-v1.json").read_text(encoding="utf-8")
+)
+_MAP_REVISION = "1" * 40
+_MAP_IMAGE_DIGESTS = {
+    "admin": "sha256:" + "1" * 64,
+    "api": "sha256:" + "2" * 64,
+    "frontend": "sha256:" + "3" * 64,
+}
+
+
+def _map_pair_evidence() -> dict[str, object]:
+    """attestation이 만드는 map-pair evidence 한 벌.
+
+    네 표면 블록은 **vendored 계약에서 그대로** 가져온다 — 실제 생산자가 그렇게
+    한다(`m05_activation_attestation.py`). 그래서 계약이 v1이든 v2든 이 픽스처는
+    자동으로 그 모양을 따르고, 손으로 적은 모양이 결함을 가리는 일이 없다.
+    """
+    return {
+        "admin_image_digest": _MAP_IMAGE_DIGESTS["admin"],
+        "api_image_digest": _MAP_IMAGE_DIGESTS["api"],
+        "frontend_image_digest": _MAP_IMAGE_DIGESTS["frontend"],
+        # 네 표면 블록은 attestation이 **계약을 그대로 복사한 것**이다. 손으로
+        # 다시 적으면 실제 생산자가 낼 수 없는 문서를 만들게 되고, 실제로 그렇게
+        # 만든 픽스처가 v2 스키마 결함을 통째로 가리고 있었다(적대 리뷰).
+        **{
+            name: dict(_PAIR_CONTRACT["map"][name]) for name in ("admin", "full", "service", "user")
+        },
+        "runtime": {
+            "admin_openapi": {
+                "canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
+                "source_canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
+                "source_revision": _MAP_REVISION,
+                "source_sha256": KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256,
+                "surface_coverage_sha256": KOR_TRAVEL_MAP_M05_ADMIN_RUNTIME_OPERATION_CONTRACT_SHA256,
+                "transport": "http",
+                "transport_sha256": "a" * 64,
+            },
+            "api": {
+                "container_id": "b" * 64,
+                "digest": _MAP_IMAGE_DIGESTS["api"],
+                "environment": "staging",
+                "image_id": _MAP_IMAGE_DIGESTS["api"],
+                "compose_project": "map-m05",
+                "compose_service": "api",
+                "revision_label": _MAP_REVISION,
+                "source_revision": _MAP_REVISION,
+                "started_at": "2026-08-23T00:00:00.000000000Z",
+            },
+            "admin": {
+                "container_id": "a" * 64,
+                "digest": _MAP_IMAGE_DIGESTS["admin"],
+                "environment": "staging",
+                "image_id": _MAP_IMAGE_DIGESTS["admin"],
+                "compose_project": "map-m05",
+                "compose_service": "admin",
+                "revision_label": _MAP_REVISION,
+                "source_revision": _MAP_REVISION,
+                "started_at": "2026-08-23T00:00:00.000000000Z",
+            },
+            "frontend": {
+                "container_id": "c" * 64,
+                "digest": _MAP_IMAGE_DIGESTS["frontend"],
+                "environment": "staging",
+                "image_id": _MAP_IMAGE_DIGESTS["frontend"],
+                "compose_project": "map-m05",
+                "compose_service": "frontend",
+                "revision_label": _MAP_REVISION,
+                "source_revision": _MAP_REVISION,
+                "started_at": "2026-08-23T00:00:00.000000000Z",
+            },
+            "full_openapi_sha256": KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
+            "full_openapi": {
+                "canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
+                "source_canonical_sha256": KOR_TRAVEL_MAP_M05_FULL_SOURCE_CANONICAL_SHA256,
+                "source_revision": _MAP_REVISION,
+                "source_sha256": KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
+                "surface_coverage_sha256": KOR_TRAVEL_MAP_M05_FULL_RUNTIME_OPERATION_CONTRACT_SHA256,
+                "transport": "http",
+                "transport_sha256": "a" * 64,
+            },
+            "service_openapi": {
+                "canonical_sha256": KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_CANONICAL_SHA256,
+                "source_canonical_sha256": KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_CANONICAL_SHA256,
+                "source_revision": KOR_TRAVEL_MAP_SERVICE_RELEASE_REVISION,
+                "source_sha256": KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256,
+                "surface_coverage_sha256": KOR_TRAVEL_MAP_M05_SERVICE_RUNTIME_OPERATION_CONTRACT_SHA256,
+                "transport": "source-artifact",
+                "transport_sha256": "b" * 64,
+            },
+            "user_openapi": {
+                "canonical_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
+                "source_canonical_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
+                "source_revision": _MAP_REVISION,
+                "source_sha256": KOR_TRAVEL_MAP_M05_USER_OPENAPI_SHA256,
+                "surface_coverage_sha256": KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256,
+                "transport": "source-artifact",
+                "transport_sha256": "d" * 64,
+            },
+        },
+    }
 
 
 def _test_trust_anchor_sha256(private_key: Ed25519PrivateKey) -> str:
@@ -575,111 +671,7 @@ def test_m05_signer_seals_checked_evidence_and_settings_accepts_it(
     )
     _write_json(
         evidence_dir / "map-pair.json",
-        {
-            "admin_image_digest": KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST,
-            "api_image_digest": KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST,
-            "frontend_image_digest": KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST,
-            "admin": {
-                "openapi_sha256": KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256,
-                "runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_ADMIN_RUNTIME_OPERATION_CONTRACT_SHA256,
-                "source_canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
-                "source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_OPERATION_CONTRACT_SHA256,
-                "source_revision": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-            },
-            "full": {
-                "openapi_sha256": KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
-                "runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_FULL_RUNTIME_OPERATION_CONTRACT_SHA256,
-                "source_canonical_sha256": KOR_TRAVEL_MAP_M05_FULL_SOURCE_CANONICAL_SHA256,
-                "source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_FULL_SOURCE_OPERATION_CONTRACT_SHA256,
-                "source_revision": KOR_TRAVEL_MAP_M05_FULL_SOURCE_REVISION,
-            },
-            "service": {
-                "openapi_sha256": KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256,
-                "runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_SERVICE_RUNTIME_OPERATION_CONTRACT_SHA256,
-                "source_canonical_sha256": KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_CANONICAL_SHA256,
-                "source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_OPERATION_CONTRACT_SHA256,
-                "source_revision": KOR_TRAVEL_MAP_SERVICE_RELEASE_REVISION,
-            },
-            "user": {
-                "openapi_sha256": KOR_TRAVEL_MAP_M05_USER_OPENAPI_SHA256,
-                "runtime_operation_contract_sha256": KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256,
-                "source_canonical_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
-                "source_operation_contract_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_OPERATION_CONTRACT_SHA256,
-                "source_revision": KOR_TRAVEL_MAP_M05_USER_SOURCE_REVISION,
-            },
-            "runtime": {
-                "admin_openapi": {
-                    "canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
-                    "source_canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
-                    "source_revision": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-                    "source_sha256": KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256,
-                    "surface_coverage_sha256": KOR_TRAVEL_MAP_M05_ADMIN_RUNTIME_OPERATION_CONTRACT_SHA256,
-                    "transport": "http",
-                    "transport_sha256": "a" * 64,
-                },
-                "api": {
-                    "container_id": "b" * 64,
-                    "digest": KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST,
-                    "environment": "staging",
-                    "image_id": KOR_TRAVEL_MAP_M05_API_IMAGE_DIGEST,
-                    "compose_project": "map-m05",
-                    "compose_service": "api",
-                    "revision_label": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-                    "source_revision": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-                    "started_at": "2026-08-23T00:00:00.000000000Z",
-                },
-                "admin": {
-                    "container_id": "a" * 64,
-                    "digest": KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST,
-                    "environment": "staging",
-                    "image_id": KOR_TRAVEL_MAP_M05_ADMIN_IMAGE_DIGEST,
-                    "compose_project": "map-m05",
-                    "compose_service": "admin",
-                    "revision_label": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-                    "source_revision": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-                    "started_at": "2026-08-23T00:00:00.000000000Z",
-                },
-                "frontend": {
-                    "container_id": "c" * 64,
-                    "digest": KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST,
-                    "environment": "staging",
-                    "image_id": KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST,
-                    "compose_project": "map-m05",
-                    "compose_service": "frontend",
-                    "revision_label": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-                    "source_revision": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION,
-                    "started_at": "2026-08-23T00:00:00.000000000Z",
-                },
-                "full_openapi_sha256": KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
-                "full_openapi": {
-                    "canonical_sha256": KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_CANONICAL_SHA256,
-                    "source_canonical_sha256": KOR_TRAVEL_MAP_M05_FULL_SOURCE_CANONICAL_SHA256,
-                    "source_revision": KOR_TRAVEL_MAP_M05_FULL_SOURCE_REVISION,
-                    "source_sha256": KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256,
-                    "surface_coverage_sha256": KOR_TRAVEL_MAP_M05_FULL_RUNTIME_OPERATION_CONTRACT_SHA256,
-                    "transport": "http",
-                    "transport_sha256": "a" * 64,
-                },
-                "service_openapi": {
-                    "canonical_sha256": KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_CANONICAL_SHA256,
-                    "source_canonical_sha256": KOR_TRAVEL_MAP_M05_SERVICE_SOURCE_CANONICAL_SHA256,
-                    "source_revision": KOR_TRAVEL_MAP_SERVICE_RELEASE_REVISION,
-                    "source_sha256": KOR_TRAVEL_MAP_SERVICE_OPENAPI_SHA256,
-                    "surface_coverage_sha256": KOR_TRAVEL_MAP_M05_SERVICE_RUNTIME_OPERATION_CONTRACT_SHA256,
-                    "transport": "source-artifact",
-                    "transport_sha256": "b" * 64,
-                },
-                "user_openapi": {
-                    "canonical_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
-                    "source_canonical_sha256": KOR_TRAVEL_MAP_M05_USER_SOURCE_CANONICAL_SHA256,
-                    "source_revision": KOR_TRAVEL_MAP_M05_USER_SOURCE_REVISION,
-                    "source_sha256": KOR_TRAVEL_MAP_M05_USER_OPENAPI_SHA256,
-                    "surface_coverage_sha256": KOR_TRAVEL_MAP_M05_USER_RUNTIME_OPERATION_CONTRACT_SHA256,
-                    "transport": "source-artifact",
-                    "transport_sha256": "d" * 64,
-                },
-            },
-        },
+        _map_pair_evidence(),
     )
     _write_json(
         evidence_dir / "pinvi-images.json",
@@ -989,3 +981,75 @@ def test_m05_signer_seals_checked_evidence_and_settings_accepts_it(
             environment="staging",
             require_root_owned=False,
         )
+
+
+def test_map_pair_keeps_binding_revisions_and_digests_without_the_contract_copy() -> None:
+    """v2 계약이 사본을 걷어낸 자리에 evidence 내부 결박이 남아 있는가.
+
+    v1 계약은 Map revision과 runtime image digest를 **스스로 한 벌 더** 선언했고,
+    수신자는 그 사본과 대조했다. v2는 그 선언을 없앤다(`T-VN-PAIR-V2`,
+    `AGENTS.md` DO NOT 15) — 없어지는 것은 세 번째 선언이지 검증이 아니어야 한다.
+    아래 변조는 계약이 아무 말도 하지 않는 v2에서도 전부 빨간불이어야 하고,
+    변조하지 않은 evidence는 통과해야 한다(게이트가 공허하지 않다는 증거).
+    """
+    module = _receipt_module()
+    expected = module._pair_provenance()
+    assert "runtime_image_digests" in expected
+    assert expected["runtime_image_digests"] == {}, "v2 계약은 image digest를 선언하지 않는다"
+    assert "source_revision" not in expected["admin"], "v2 계약은 revision을 선언하지 않는다"
+
+    # 픽스처의 표면 블록은 **생산자와 같은 방식**으로 만들어져야 한다. 손으로 적으면
+    # 실제로 존재할 수 없는 문서가 되고, 그 문서가 v2 스키마 결함을 가렸다.
+    baseline = _map_pair_evidence()
+    for name in ("admin", "full", "service", "user"):
+        assert baseline[name] == _PAIR_CONTRACT["map"][name]
+
+    module._map_pair(baseline, expected, environment="staging")
+
+    other_revision = "2" * 40
+    other_digest = "sha256:" + "4" * 64
+
+    def _runtime_artifact_revision(evidence: dict[str, object]) -> None:
+        evidence["runtime"]["admin_openapi"]["source_revision"] = other_revision
+
+    def _runtime_image_revision(evidence: dict[str, object]) -> None:
+        evidence["runtime"]["api"]["revision_label"] = other_revision
+        evidence["runtime"]["api"]["source_revision"] = other_revision
+
+    def _pair_image_digest(evidence: dict[str, object]) -> None:
+        evidence["admin_image_digest"] = other_digest
+
+    def _runtime_image_digest(evidence: dict[str, object]) -> None:
+        evidence["runtime"]["api"]["digest"] = other_digest
+        evidence["runtime"]["api"]["image_id"] = other_digest
+
+    def _surface_entry_shape(evidence: dict[str, object]) -> None:
+        # v2 계약에는 없는 키다. evidence가 계약의 사본인 이상 이 모양은 생길 수
+        # 없고, 스키마를 리터럴로 적어 두면 반대로 **정상 모양**이 거부된다.
+        evidence["admin"] = {**evidence["admin"], "source_revision": _MAP_REVISION}
+
+    def _surface_entry_digest(evidence: dict[str, object]) -> None:
+        # evidence의 표면 블록이 계약과 한 필드라도 다르면 거부돼야 한다.
+        evidence["admin"] = {**evidence["admin"], "openapi_sha256": "3" * 64}
+
+    def _service_surface_revision(evidence: dict[str, object]) -> None:
+        # service 표면의 revision을 pinned Map revision으로 채우는 실수 —
+        # 적대 리뷰 P0이 지목한 바로 그것이다.
+        evidence["runtime"]["service_openapi"]["source_revision"] = _MAP_REVISION
+
+    for label, mutate in (
+        ("runtime OpenAPI artifact revision", _runtime_artifact_revision),
+        ("runtime image revision", _runtime_image_revision),
+        ("pair image digest", _pair_image_digest),
+        ("runtime image digest", _runtime_image_digest),
+        ("surface entry shape", _surface_entry_shape),
+        ("surface entry digest", _surface_entry_digest),
+        ("service surface revision", _service_surface_revision),
+    ):
+        evidence = _map_pair_evidence()
+        mutate(evidence)
+        try:
+            module._map_pair(evidence, expected, environment="staging")
+        except module.ReceiptError:
+            continue
+        pytest.fail(f"{label} 변조가 통과했다 — evidence 내부 결박이 사라졌다")

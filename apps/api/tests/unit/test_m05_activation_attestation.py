@@ -84,7 +84,7 @@ def test_isolated_runtime_provenance_binds_exact_source_openapi_and_images(
     linux_tmp_path: Path,
 ) -> None:
     module = _attestation_module()
-    pair = module._load_pair()
+    pair, _pair_version = module._load_pair()
     provenance = {
         "kind": "m05-isolated-runtime-provenance-v1",
         "execution_identity_sha256": "d" * 64,
@@ -94,7 +94,9 @@ def test_isolated_runtime_provenance_binds_exact_source_openapi_and_images(
             "api_image_id": "sha256:" + "2" * 64,
             "frontend_image_id": "sha256:" + "3" * 64,
             "full_openapi_sha256": pair["full"]["openapi_sha256"],
-            "source_revision": pair["full"]["source_revision"],
+            # v2 계약은 revision을 선언하지 않는다 — envelope이 그 값의 정본이다
+            # (`T-VN-PAIR-V2`). v1이면 계약값과 같아야 하므로 그것을 그대로 쓴다.
+            "source_revision": pair["full"].get("source_revision", "a" * 40),
         },
         "pinset_sha256": "e" * 64,
         "pinvi": {
@@ -419,14 +421,51 @@ def test_m05_endpoint_rejects_wildcard_host_binding() -> None:
         )
 
 
-def test_m05_map_checkout_allowlist_uses_only_source_revisions() -> None:
+def test_m05_map_checkout_allowlist_covers_every_surface_revision() -> None:
+    """Map checkout이 **읽을 표면 전부**의 revision을 담고 있어야 한다.
+
+    종전 이름과 docstring은 이 테스트가 `_live`의 허용 집합을 본다고 말했지만
+    실제로는 계약 파일 모양만 다시 확인했다(2차 적대 리뷰). 그리고 그 주장 자체가
+    틀렸다 — v2의 허용 집합은 하나가 아니라 둘이다. service 표면은 자기 릴리스
+    revision에서 읽히므로 그 object도 checkout에 있어야 하고, 없으면 하네스가 다
+    돌고 난 뒤 `git show`에서 죽는다.
+    """
+
     module = _attestation_module()
-    pair = module._load_pair()
+    pair, pair_version = module._load_pair()
+    service_release = module._service_release_revision()
+    pinned = "1" * 40
 
-    allowed = {pair[name]["source_revision"] for name in ("admin", "full", "service", "user")}
+    revisions = module._surface_revisions(
+        pair,
+        version=pair_version,
+        map_source_revision=pinned,
+        service_release_revision=service_release,
+    )
+    allowed = set(revisions.values())
 
-    assert "runtime_image_digests" not in allowed
-    assert pair["full"]["source_revision"] in allowed
+    if pair_version == 1:
+        # v1은 계약이 표면마다 선언한다 — 허용 집합도 그것이다.
+        assert allowed == {
+            pair[name]["source_revision"] for name in ("admin", "full", "service", "user")
+        }
+    else:
+        assert pair_version == 2
+        assert pair["runtime_image_digests"] == {}
+        assert allowed == {pinned, service_release}
+        assert service_release != pinned, "픽스처가 두 값을 구분하지 못한다"
+
+    # `_live`가 그 집합을 그대로 checkout 대조에 넘기는지 — 배선이 끊기면 위의
+    # 계산은 맞는데 실행 경로만 조용히 달라진다.
+    source = (
+        Path(__file__).resolve().parents[4] / "scripts/m05_activation_attestation.py"
+    ).read_text(encoding="utf-8")
+    assert "allowed_revisions=set(surface_revisions.values())," in source
+    # 세 Map 컨테이너의 라벨은 **admin 표면**으로 대조한다 — receipt `_map_pair`도
+    # 같은 표면을 쓴다. 다른 표면으로 배선하면 v1 계약(표면마다 revision이 다를 수
+    # 있다)에서 두 단계가 서로 모순된 요구를 한다(2차 적대 리뷰).
+    assert source.count('map_admin_revision=surface_revisions["admin"],') == 4
+    assert "expected_revision=map_source_revision," not in source
 
 
 def test_playwright_image_reference_accepts_digest_only_or_tagged_digest() -> None:
@@ -859,3 +898,53 @@ def test_live_http_failure_diagnostic_never_leaks_request_material() -> None:
         module._http_failure_diagnostic(URLError(_WeirdReason(secret))),
     ):
         assert secret not in produced
+
+
+def test_surface_revisions_names_the_producer_of_every_map_surface() -> None:
+    """v2에서 표면마다 revision을 **누가 만드는가**를 결박한다.
+
+    v1 pair 계약은 네 표면의 revision을 스스로 선언했다. v2는 그 사본을 걷어내므로
+    각 값의 정본을 직접 가리켜야 하는데, 네 표면을 뭉뚱그려 pin registry 값으로
+    채우면 `service`가 틀린다 — 그 값의 정본은
+    `contracts/kor-travel-map-service-provenance-v1.json`이고 PinVi가 컨테이너
+    부팅 때 그 계약과 대조한다(적대 리뷰 P0: 재핀 주기가 달라 실제로 갈라져 있다).
+    """
+
+    module = _attestation_module()
+    repo_root = Path(__file__).resolve().parents[4]
+    service_release = json.loads(
+        (repo_root / "contracts/kor-travel-map-service-provenance-v1.json").read_text(
+            encoding="utf-8"
+        )
+    )["map_release_revision"]
+    assert module._service_release_revision() == service_release
+
+    pinned = "1" * 40
+    v1_pair = {
+        name: {"source_revision": f"{index}" * 40}
+        for index, name in enumerate(("admin", "full", "service", "user"), start=2)
+    }
+
+    v1 = module._surface_revisions(
+        v1_pair,
+        version=1,
+        map_source_revision=pinned,
+        service_release_revision=service_release,
+    )
+    # v1에서는 계약이 정본이다 — 배선된 값이 계약을 덮어써서는 안 된다.
+    assert v1 == {name: entry["source_revision"] for name, entry in v1_pair.items()}
+
+    v2 = module._surface_revisions(
+        {name: {} for name in ("admin", "full", "service", "user")},
+        version=2,
+        map_source_revision=pinned,
+        service_release_revision=service_release,
+    )
+    assert v2 == {
+        "admin": pinned,
+        "full": pinned,
+        "service": service_release,
+        "user": pinned,
+    }
+    # 이 한 줄이 P0의 요지다. service를 pinned Map revision으로 채우면 PinVi가 뜨지 않는다.
+    assert v2["service"] != pinned

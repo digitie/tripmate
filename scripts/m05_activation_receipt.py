@@ -1562,36 +1562,71 @@ def _ledger(args: argparse.Namespace) -> int:
         return _ledger_unlocked(args)
 
 
+#: service 표면의 릴리스 revision **정본**. v1 pair 계약은 이 값을 한 벌 더
+#: 선언했고, v2는 그 사본을 걷어내 이 문서를 유일한 생산자로 둔다.
+#: `app/core/config.py`가 receipt의 `map_service_source_revision`을 바로 이 값과
+#: 대조하므로, receipt를 만들 때 여기서 같은 값을 확인한다.
+_SERVICE_PROVENANCE_PATH = Path(__file__).resolve().parents[1] / (
+    "contracts/kor-travel-map-service-provenance-v1.json"
+)
+
+
+def _service_release_revision() -> str:
+    """service 표면의 릴리스 revision을 그 값의 정본 문서에서 읽는다."""
+
+    try:
+        raw = json.loads(
+            _SERVICE_PROVENANCE_PATH.read_bytes(),
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ReceiptError) as exc:
+        raise ReceiptError("Map service provenance file is invalid") from exc
+    document = _object(raw, name="Map service provenance")
+    return _commit(
+        document.get("map_release_revision"),
+        name="service provenance map_release_revision",
+    )
+
+
 def _pair_provenance() -> dict[str, dict[str, str]]:
     try:
         raw = json.loads(_PAIR_PROVENANCE.read_bytes(), object_pairs_hook=_reject_duplicate_keys)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ReceiptError) as exc:
         raise ReceiptError("pair provenance file is invalid") from exc
     payload = _object(raw, name="pair provenance")
-    if (
-        set(payload) != {"map", "runtime_image_digests", "version"}
-        or type(payload["version"]) is not int
-        or payload["version"] != 1
-    ):
+    # v1은 surface마다 `source_revision`을, 최상위에 `runtime_image_digests`를 갖는다.
+    # 둘 다 pin registry/Manager receipt가 정본인 값의 두 번째 선언이라 v2가 걷어낸다
+    # (`T-VN-PAIR-V2`). 이 스크립트는 그 두 값을 쓰지 않으므로 봉투 판정만 넓힌다.
+    version = payload.get("version")
+    if version == 1:
+        expected_envelope = {"map", "runtime_image_digests", "version"}
+    elif version == 2:
+        expected_envelope = {"map", "version"}
+    else:
+        raise ReceiptError("pair provenance envelope is invalid")
+    if set(payload) != expected_envelope or type(payload["version"]) is not int:
         raise ReceiptError("pair provenance envelope is invalid")
     map_value = _object(payload["map"], name="pair provenance map")
     if set(map_value) != {"admin", "full", "service", "user"}:
         raise ReceiptError("pair provenance map inventory is invalid")
-    runtime_images = _object(
-        payload["runtime_image_digests"], name="pair provenance runtime image digests"
-    )
-    if set(runtime_images) != {"admin", "api", "frontend"}:
-        raise ReceiptError("pair provenance runtime image digest inventory is invalid")
+    if version == 1:
+        runtime_images = _object(
+            payload["runtime_image_digests"], name="pair provenance runtime image digests"
+        )
+        if set(runtime_images) != {"admin", "api", "frontend"}:
+            raise ReceiptError("pair provenance runtime image digest inventory is invalid")
     result: dict[str, dict[str, str]] = {}
     for name in ("admin", "full", "service", "user"):
         entry = _object(map_value.get(name), name=f"pair provenance {name}")
-        if set(entry) != {
+        expected_entry = {
             "openapi_sha256",
             "runtime_operation_contract_sha256",
             "source_canonical_sha256",
             "source_operation_contract_sha256",
-            "source_revision",
-        }:
+        }
+        if version == 1:
+            expected_entry = expected_entry | {"source_revision"}
+        if set(entry) != expected_entry:
             raise ReceiptError(f"pair provenance {name} schema is invalid")
         result[name] = {
             "openapi_sha256": _sha256(entry["openapi_sha256"], name=f"{name}.openapi_sha256"),
@@ -1607,12 +1642,25 @@ def _pair_provenance() -> dict[str, dict[str, str]]:
                 entry["source_operation_contract_sha256"],
                 name=f"{name}.source_operation_contract_sha256",
             ),
-            "source_revision": _commit(entry["source_revision"], name=f"{name}.source_revision"),
+            **(
+                {
+                    "source_revision": _commit(
+                        entry["source_revision"], name=f"{name}.source_revision"
+                    )
+                }
+                if version == 1
+                else {}
+            ),
         }
-    result["runtime_image_digests"] = {
-        name: _digest(runtime_images[name], name=f"runtime_image_digests.{name}")
-        for name in ("admin", "api", "frontend")
-    }
+    # v2 계약에는 runtime image digest가 없다 — 그 값의 생산자는 Manager evidence다.
+    result["runtime_image_digests"] = (
+        {
+            name: _digest(runtime_images[name], name=f"runtime_image_digests.{name}")
+            for name in ("admin", "api", "frontend")
+        }
+        if version == 1
+        else {}
+    )
     return result
 
 
@@ -2314,7 +2362,7 @@ def _map_pair(
     expected: dict[str, dict[str, str]],
     *,
     environment: str,
-) -> dict[str, str]:
+) -> dict[str, object]:
     pair = _object(value, name="Map pair evidence")
     if set(pair) != {
         "admin",
@@ -2329,25 +2377,16 @@ def _map_pair(
         raise ReceiptError("Map pair evidence schema is invalid")
     for name in ("admin", "full", "service", "user"):
         entry = _object(pair[name], name=f"Map pair {name}")
-        if set(entry) != {
-            "openapi_sha256",
-            "runtime_operation_contract_sha256",
-            "source_canonical_sha256",
-            "source_operation_contract_sha256",
-            "source_revision",
-        }:
+        # evidence의 이 네 블록은 attestation이 **계약을 그대로 복사한 것**이다
+        # (`m05_activation_attestation.py`의 `map_pair = {"admin": pair["admin"], ...}`).
+        # 그러므로 기대 키 집합을 여기서 다시 적지 않고 계약에서 **유도**한다 —
+        # v1이면 5키, v2면 `source_revision`이 빠진 4키다. 리터럴로 적어 두면
+        # 계약이 움직일 때 이 자리가 따라오지 않고, 실제로 그렇게 막혀 있었다.
+        if set(entry) != set(expected[name]):
             raise ReceiptError(f"Map pair {name} evidence schema is invalid")
-        for field in ("openapi_sha256", "source_revision"):
+        for field in entry:
             if entry[field] != expected[name][field]:
                 raise ReceiptError(f"Map pair {name} does not match the vendored provenance")
-        if (
-            entry["runtime_operation_contract_sha256"]
-            != expected[name]["runtime_operation_contract_sha256"]
-            or entry["source_canonical_sha256"] != expected[name]["source_canonical_sha256"]
-            or entry["source_operation_contract_sha256"]
-            != expected[name]["source_operation_contract_sha256"]
-        ):
-            raise ReceiptError(f"Map pair {name} hashes are not pinned to provenance")
     runtime = _object(pair["runtime"], name="Map pair runtime evidence")
     if set(runtime) != {
         "admin_openapi",
@@ -2362,6 +2401,26 @@ def _map_pair(
         raise ReceiptError("Map pair runtime evidence schema is invalid")
     if runtime["full_openapi_sha256"] != expected["full"]["openapi_sha256"]:
         raise ReceiptError("Map runtime OpenAPI does not match the vendored provenance")
+    # 표면마다 **누가 그 revision을 만드는가**. attestation `_surface_revisions`와
+    # 같은 규칙이고, 여기서는 그 규칙대로 만들어졌는지를 확인하는 쪽이다.
+    #
+    #   v1              계약이 스스로 선언했다 — 그 값과 대조한다.
+    #   v2 · service    `contracts/kor-travel-map-service-provenance-v1.json`.
+    #                   `config.py`가 부팅 때 대조하는 값이 바로 이것이다.
+    #   v2 · 나머지 셋   Map pinned revision. evidence 안에서 그것을 말하는 것은
+    #                   세 컨테이너의 OCI revision 라벨이다.
+    map_runtime_revision = _commit(
+        _object(runtime["admin"], name="Map runtime admin").get("source_revision"),
+        name="Map runtime admin.source_revision",
+    )
+    surface_revisions = {
+        name: (
+            expected[name]["source_revision"]
+            if "source_revision" in expected[name]
+            else (_service_release_revision() if name == "service" else map_runtime_revision)
+        )
+        for name in ("admin", "full", "service", "user")
+    }
     runtime_openapi: dict[str, dict[str, object]] = {}
     for surface, provenance_name in (
         ("admin_openapi", "admin"),
@@ -2403,7 +2462,9 @@ def _map_pair(
             != expected[provenance_name]["source_canonical_sha256"]
             or artifact["surface_coverage_sha256"]
             != expected[provenance_name]["runtime_operation_contract_sha256"]
-            or artifact["source_revision"] != expected[provenance_name]["source_revision"]
+            # 표면별 revision을 그 값의 **정본**과 대조한다. 사라지는 것은 계약
+            # 사본이지 검증이 아니다(`T-VN-PAIR-V2`, AGENTS.md DO NOT 15).
+            or artifact["source_revision"] != surface_revisions[provenance_name]
         ):
             raise ReceiptError(f"Map runtime {provenance_name} OpenAPI is not bound to the pair")
         _commit(
@@ -2438,7 +2499,10 @@ def _map_pair(
             raise ReceiptError(f"Map runtime {name} source label is not self-consistent")
         if runtime_image["environment"] != environment:
             raise ReceiptError(f"Map runtime {name} environment does not match receipt scope")
-        if runtime_image["source_revision"] != expected["admin"]["source_revision"]:
+        # 세 컨테이너는 같은 Map 빌드에서 나온다 — 서로 같은 revision을 말해야
+        # 하고, 그것이 admin 표면이 가리키는 revision이다. v1에서는 계약 사본을
+        # 경유해 같은 결박이 성립했다.
+        if runtime_image["source_revision"] != surface_revisions["admin"]:
             raise ReceiptError(f"Map runtime {name} source revision does not match the pair")
         _digest(runtime_image["digest"], name=f"Map runtime {name}.digest")
         _commit(runtime_image["source_revision"], name=f"Map runtime {name}.source_revision")
@@ -2470,7 +2534,10 @@ def _map_pair(
         expected["runtime_image_digests"], name="Map expected runtime image digests"
     )
     for name, digest in image_digests.items():
-        if digest != _digest(
+        # v1 계약은 이미지 digest를 스스로 한 벌 더 선언했다. v2는 그 선언을
+        # 걷어냈고 — 정본은 Manager pin registry이고 evidence가 그 산출물이다 —
+        # 여기 남는 결박은 evidence 안의 두 선언(pair ↔ runtime)이다.
+        if name in expected_image_digests and digest != _digest(
             expected_image_digests[name], name=f"Map expected {name} image digest"
         ):
             raise ReceiptError(f"Map {name} image digest does not match the pinned runtime")
@@ -2479,6 +2546,13 @@ def _map_pair(
             raise ReceiptError(f"Map {name} image digest is not bound to its runtime")
     return {
         "admin_image_digest": image_digests["admin"],
+        # v2 계약은 Map revision을 선언하지 않는다. 그 값은 Manager가 만든 evidence
+        # artifact에 있고, 여기서 그대로 실어 준다 — receipt payload가 그것을 담고
+        # Ed25519 서명이 보호한다(`T-VN-PAIR-V2`).
+        "source_revisions": {
+            surface: runtime_openapi[f"{surface}_openapi"]["source_revision"]
+            for surface in ("admin", "full", "service", "user")
+        },
         "map_admin_container_id": runtime["admin"]["container_id"],
         "admin_runtime_openapi_sha256": _sha256(
             runtime_openapi["admin_openapi"]["transport_sha256"],
@@ -2999,7 +3073,7 @@ def _create(args: argparse.Namespace) -> int:
         "map_admin_source_operation_contract_sha256": pair_expected["admin"][
             "source_operation_contract_sha256"
         ],
-        "map_admin_source_revision": pair_expected["admin"]["source_revision"],
+        "map_admin_source_revision": map_pair["source_revisions"]["admin"],
         "map_admin_image_digest": map_pair["admin_image_digest"],
         "map_admin_container_id": map_pair["map_admin_container_id"],
         "map_api_image_digest": map_pair["api_image_digest"],
@@ -3014,7 +3088,7 @@ def _create(args: argparse.Namespace) -> int:
         "map_full_source_operation_contract_sha256": pair_expected["full"][
             "source_operation_contract_sha256"
         ],
-        "map_full_source_revision": pair_expected["full"]["source_revision"],
+        "map_full_source_revision": map_pair["source_revisions"]["full"],
         "map_pair_evidence_sha256": evidence_hashes["map_pair"],
         "map_service_openapi_sha256": pair_expected["service"]["openapi_sha256"],
         "map_service_runtime_openapi_sha256": map_pair["service_runtime_openapi_sha256"],
@@ -3024,7 +3098,7 @@ def _create(args: argparse.Namespace) -> int:
         "map_service_source_operation_contract_sha256": pair_expected["service"][
             "source_operation_contract_sha256"
         ],
-        "map_service_source_revision": pair_expected["service"]["source_revision"],
+        "map_service_source_revision": map_pair["source_revisions"]["service"],
         "map_user_openapi_sha256": pair_expected["user"]["openapi_sha256"],
         "map_user_runtime_openapi_sha256": map_pair["user_runtime_openapi_sha256"],
         "map_user_runtime_operation_contract_sha256": map_pair[
@@ -3033,7 +3107,7 @@ def _create(args: argparse.Namespace) -> int:
         "map_user_source_operation_contract_sha256": pair_expected["user"][
             "source_operation_contract_sha256"
         ],
-        "map_user_source_revision": pair_expected["user"]["source_revision"],
+        "map_user_source_revision": map_pair["source_revisions"]["user"],
         "pinvi_api_image_digest": pinvi_images["api"],
         "pinvi_api_container_id": pinvi_images["api_container_id"],
         "pinvi_dagster_image_digest": pinvi_images["dagster"],

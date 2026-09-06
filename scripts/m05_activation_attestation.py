@@ -65,6 +65,27 @@ _PLAYWRIGHT_IMAGE_RE = re.compile(
 _PAIR_PATH = Path(__file__).resolve().parents[1] / (
     "contracts/kor-travel-map-m05-pair-provenance-v1.json"
 )
+#: 이 파일이 여러 곳에서 인용하는 `T-VN-PAIR-V2`의 정본 문서는 **Map 저장소**의
+#: `docs/tasks-acceptance.md` 같은 이름 절이다(§3~§7이 v1 분기 제거 순서와 롤백을
+#: 정한다). 이 저장소에는 없다 — 찾지 못해 코드에서 역추적하는 일이 없도록 여기 적는다.
+#: service 표면의 릴리스 revision **정본**. v1 pair 계약은 이 값을 한 벌 더
+#: 선언했고(`map.service.source_revision`), 그래서 이 문서가 갱신되지 않아도
+#: pair 계약만 바뀌면 두 값이 갈라질 수 있었다. v2는 pair 쪽 사본을 걷어내고
+#: 이 문서를 유일한 생산자로 둔다 — `app/core/config.py`가 활성화 receipt의
+#: `map_service_source_revision`을 바로 이 값과 대조한다.
+_SERVICE_PROVENANCE_PATH = Path(__file__).resolve().parents[1] / (
+    "contracts/kor-travel-map-service-provenance-v1.json"
+)
+#: pair 계약이 담는 네 OpenAPI 표면.
+_SURFACES = ("admin", "full", "service", "user")
+#: 각 표면이 Map source의 어느 파일에서 나오는가. `admin`과 `full`이 같은 파일인
+#: 것은 Map이 그 둘을 같은 문서로 내기 때문이다.
+_SURFACE_PATHS = {
+    "admin": "packages/kor-travel-map-api/openapi.json",
+    "full": "packages/kor-travel-map-api/openapi.json",
+    "service": "packages/kor-travel-map-api/openapi.service.json",
+    "user": "packages/kor-travel-map-api/openapi.user.json",
+}
 _ISOLATED_RUNTIME_PROVENANCE_KIND = "m05-isolated-runtime-provenance-v1"
 _HOST_TOOL_DIRECTORIES = (Path("/usr/bin"), Path("/bin"))
 _M04_MAX_AGE_SECONDS = 15 * 60
@@ -442,32 +463,47 @@ def _write_json(path: Path, value: object) -> str:
     return _sha256(raw)
 
 
-def _load_pair() -> dict[str, dict[str, str]]:
+#: v1은 surface마다 `source_revision`을, 최상위에 `runtime_image_digests`를 갖는다.
+#: 둘 다 pin registry/Manager receipt가 정본인 값의 **두 번째 선언**이라 v2가 걷어낸다
+#: (`T-VN-PAIR-V2`, `AGENTS.md` DO NOT 15). v2에서는 그 값을 호출부가 배선해 준다.
+_PAIR_V1_ENTRY_KEYS = {
+    "openapi_sha256",
+    "runtime_operation_contract_sha256",
+    "source_canonical_sha256",
+    "source_operation_contract_sha256",
+    "source_revision",
+}
+_PAIR_V2_ENTRY_KEYS = _PAIR_V1_ENTRY_KEYS - {"source_revision"}
+
+
+def _load_pair() -> tuple[dict[str, dict[str, str]], int]:
     raw, _ = _read_json(_PAIR_PATH)
     envelope = _object(raw, name="Map pair provenance")
-    if (
-        set(envelope) != {"map", "runtime_image_digests", "version"}
-        or envelope["version"] != 1
-    ):
+    version = envelope.get("version")
+    if version == 1:
+        expected_envelope = {"map", "runtime_image_digests", "version"}
+    elif version == 2:
+        expected_envelope = {"map", "version"}
+    else:
+        raise AttestationError("Map pair provenance envelope is invalid")
+    if set(envelope) != expected_envelope:
         raise AttestationError("Map pair provenance envelope is invalid")
     map_value = _object(envelope["map"], name="Map pair provenance map")
     if set(map_value) != {"admin", "full", "service", "user"}:
         raise AttestationError("Map pair provenance inventory is invalid")
-    runtime_images = _object(
-        envelope["runtime_image_digests"], name="Map runtime image digests"
-    )
-    if set(runtime_images) != {"admin", "api", "frontend"}:
-        raise AttestationError("Map runtime image digest inventory is invalid")
+    runtime_images: dict[str, object] = {}
+    if version == 1:
+        runtime_images = _object(
+            envelope["runtime_image_digests"], name="Map runtime image digests"
+        )
+        if set(runtime_images) != {"admin", "api", "frontend"}:
+            raise AttestationError("Map runtime image digest inventory is invalid")
     result: dict[str, dict[str, str]] = {}
     for name in ("admin", "full", "service", "user"):
         entry = _object(map_value[name], name=f"Map pair {name}")
-        if set(entry) != {
-            "openapi_sha256",
-            "runtime_operation_contract_sha256",
-            "source_canonical_sha256",
-            "source_operation_contract_sha256",
-            "source_revision",
-        }:
+        if set(entry) != (
+            _PAIR_V1_ENTRY_KEYS if version == 1 else _PAIR_V2_ENTRY_KEYS
+        ):
             raise AttestationError(f"Map pair {name} schema is invalid")
         digest = _string(entry["openapi_sha256"], name=f"{name}.openapi_sha256")
         if _SHA256_RE.fullmatch(digest) is None:
@@ -494,17 +530,23 @@ def _load_pair() -> dict[str, dict[str, str]]:
             "runtime_operation_contract_sha256": runtime_operation_contract,
             "source_canonical_sha256": source_canonical,
             "source_operation_contract_sha256": source_operation_contract,
-            "source_revision": _commit(
-                entry["source_revision"], name=f"{name}.source_revision"
+            **(
+                {
+                    "source_revision": _commit(
+                        entry["source_revision"], name=f"{name}.source_revision"
+                    )
+                }
+                if version == 1
+                else {}
             ),
         }
     result["runtime_image_digests"] = {}
-    for name in ("admin", "api", "frontend"):
+    for name in ("admin", "api", "frontend") if version == 1 else ():
         digest = _string(runtime_images[name], name=f"runtime_image_digests.{name}")
         if _DIGEST_RE.fullmatch(digest) is None:
             raise AttestationError(f"runtime_image_digests.{name} is invalid")
         result["runtime_image_digests"][name] = digest
-    return result
+    return result, version
 
 
 def _isolated_image_id(value: object, *, name: str) -> str:
@@ -586,11 +628,16 @@ def _load_isolated_runtime_provenance(
         "source_revision",
     }:
         raise AttestationError("M05 isolated Map runtime schema is invalid")
+    isolated_map_revision = _commit(
+        map_value["source_revision"], name="M05 isolated Map source revision"
+    )
+    # v1 계약은 Map revision을 **스스로 선언**해서 여기서 교차 대조가 가능했다. v2는 그
+    # 선언을 걷어냈고 정본은 Manager pin registry가 만든 이 envelope 하나다 — 대조 상대가
+    # 사라지는 것이 v2의 목적이다(이중 선언 제거). digest 대조는 v1·v2 모두 그대로 한다.
+    pair_revision = pair["full"].get("source_revision")
     if (
-        _commit(map_value["source_revision"], name="M05 isolated Map source revision")
-        != pair["full"]["source_revision"]
-        or map_value["full_openapi_sha256"] != pair["full"]["openapi_sha256"]
-    ):
+        pair_revision is not None and isolated_map_revision != pair_revision
+    ) or map_value["full_openapi_sha256"] != pair["full"]["openapi_sha256"]:
         raise AttestationError("M05 isolated Map runtime provenance differs from the pair")
     map_images = {
         "admin": _isolated_image_id(
@@ -631,6 +678,7 @@ def _load_isolated_runtime_provenance(
         "execution_identity_sha256": execution_identity,
         "manager_source_revision": manager_revision,
         "map_images": map_images,
+        "map_source_revision": isolated_map_revision,
         "pinset_sha256": pinset,
         "pinvi_images": pinvi_images,
         "sha256": _sha256(raw),
@@ -1529,19 +1577,17 @@ def _git_blob(source_root: Path, *, revision: str, relative_path: str) -> bytes:
     return completed.stdout
 
 
-def _hash_source_openapi(source_root: Path) -> dict[str, str]:
-    expected = _load_pair()
-    paths = {
-        "admin": "packages/kor-travel-map-api/openapi.json",
-        "full": "packages/kor-travel-map-api/openapi.json",
-        "service": "packages/kor-travel-map-api/openapi.service.json",
-        "user": "packages/kor-travel-map-api/openapi.user.json",
-    }
+def _hash_source_openapi(
+    source_root: Path,
+    *,
+    expected: dict[str, dict[str, str]],
+    revisions: dict[str, str],
+) -> dict[str, str]:
     actual: dict[str, str] = {}
-    for name, relative_path in paths.items():
-        revision = _commit(
-            expected[name]["source_revision"], name=f"{name}.source_revision"
-        )
+    for name, relative_path in _SURFACE_PATHS.items():
+        # 계약이 아니라 **호출부가 배선한** revision을 쓴다. v1에서는 계약값이,
+        # v2에서는 표면별 정본에서 파생된 값이 여기로 온다(`_surface_revisions`).
+        revision = revisions[name]
         source_raw = _git_blob(
             source_root, revision=revision, relative_path=relative_path
         )
@@ -1576,6 +1622,47 @@ def _hash_source_openapi(source_root: Path) -> dict[str, str]:
             )
         actual[name] = digest
     return actual
+
+
+def _service_release_revision() -> str:
+    """service 표면의 릴리스 revision을 그 값의 정본 문서에서 읽는다."""
+
+    raw, _ = _read_json(_SERVICE_PROVENANCE_PATH)
+    document = _object(raw, name="Map service provenance")
+    return _commit(
+        document.get("map_release_revision"),
+        name="service provenance map_release_revision",
+    )
+
+
+def _surface_revisions(
+    pair: dict[str, dict[str, str]],
+    *,
+    version: int,
+    map_source_revision: str,
+    service_release_revision: str,
+) -> dict[str, str]:
+    """네 표면이 각각 **어느 revision의 blob**에서 나오는지 정한다.
+
+    v1은 계약이 표면마다 그 값을 스스로 선언했다. v2는 그 선언을 걷어냈으므로
+    여기서 각 값의 정본을 직접 가리킨다 — 걷어내는 것은 사본이지 값이 아니다.
+
+    - `admin`·`full`·`user` → Map pinned revision. 정본은 Manager pin registry이고
+      격리 envelope나 `--map-source-revision`으로 들어온다.
+    - `service` → service 릴리스 revision. 정본은 `_SERVICE_PROVENANCE_PATH`다.
+      이 표면을 pinned revision으로 착각해 배선하면 `config.py`가 부팅 시
+      `map_service_source_revision` 불일치로 거부한다 — 두 값은 재핀 주기가
+      다르고 실제로 갈라져 있다.
+    """
+
+    if version == 1:
+        return {name: pair[name]["source_revision"] for name in _SURFACES}
+    return {
+        "admin": map_source_revision,
+        "full": map_source_revision,
+        "service": service_release_revision,
+        "user": map_source_revision,
+    }
 
 
 def _openapi_operations(value: object, *, name: str) -> dict[str, set[str]]:
@@ -1683,7 +1770,11 @@ def _assert_openapi_surface_covered(
 
 
 def _runtime_map_openapi(
-    *, map_admin_url: str, source_root: Path, expected: dict[str, dict[str, str]]
+    *,
+    map_admin_url: str,
+    source_root: Path,
+    expected: dict[str, dict[str, str]],
+    revisions: dict[str, str],
 ) -> dict[str, dict[str, str]]:
     """실행 중 full/admin과 source-bound service/user surface를 대조한다.
 
@@ -1699,8 +1790,8 @@ def _runtime_map_openapi(
     )
     runtime_source_raw = _git_blob(
         source_root,
-        revision=expected["admin"]["source_revision"],
-        relative_path="packages/kor-travel-map-api/openapi.json",
+        revision=revisions["admin"],
+        relative_path=_SURFACE_PATHS["admin"],
     )
     try:
         runtime_source_value = json.loads(
@@ -1719,8 +1810,8 @@ def _runtime_map_openapi(
         )
     full_source_raw = _git_blob(
         source_root,
-        revision=expected["full"]["source_revision"],
-        relative_path="packages/kor-travel-map-api/openapi.json",
+        revision=revisions["full"],
+        relative_path=_SURFACE_PATHS["full"],
     )
     try:
         full_source_value = json.loads(
@@ -1748,7 +1839,7 @@ def _runtime_map_openapi(
     result["admin_openapi"] = {
         "canonical_sha256": runtime_canonical,
         "source_canonical_sha256": source_canonical,
-        "source_revision": expected["admin"]["source_revision"],
+        "source_revision": revisions["admin"],
         "source_sha256": expected["admin"]["openapi_sha256"],
         "surface_coverage_sha256": runtime_surface_sha256,
         "transport": "http",
@@ -1757,7 +1848,7 @@ def _runtime_map_openapi(
     result["full_openapi"] = {
         "canonical_sha256": runtime_canonical,
         "source_canonical_sha256": full_source_canonical,
-        "source_revision": expected["full"]["source_revision"],
+        "source_revision": revisions["full"],
         "source_sha256": expected["full"]["openapi_sha256"],
         "surface_coverage_sha256": full_surface_coverage_sha256,
         "transport": "http",
@@ -1766,8 +1857,8 @@ def _runtime_map_openapi(
     for name in ("service", "user"):
         source_raw = _git_blob(
             source_root,
-            revision=expected[name]["source_revision"],
-            relative_path=f"packages/kor-travel-map-api/openapi.{name}.json",
+            revision=revisions[name],
+            relative_path=_SURFACE_PATHS[name],
         )
         try:
             source_value = json.loads(
@@ -1790,7 +1881,7 @@ def _runtime_map_openapi(
         result[f"{name}_openapi"] = {
             "canonical_sha256": source_canonical,
             "source_canonical_sha256": source_canonical,
-            "source_revision": expected[name]["source_revision"],
+            "source_revision": revisions[name],
             "source_sha256": expected[name]["openapi_sha256"],
             "surface_coverage_sha256": source_surface_sha256,
             "transport": "source-artifact",
@@ -2023,12 +2114,17 @@ def _runtime_snapshot(
     *,
     pair: dict[str, dict[str, str]],
     source_revision: str,
+    map_admin_revision: str,
     pinvi_image_digests: Mapping[str, str] | None = None,
 ) -> dict[str, dict[str, str]]:
+    # 세 Map 컨테이너의 OCI revision 라벨은 **admin 표면**의 revision과 대조한다.
+    # receipt `_map_pair`도 같은 표면으로 대조하므로 두 단계가 같은 것을 요구한다.
+    # v1 계약은 표면마다 revision이 다를 수 있어서 다른 표면을 쓰면 두 단계가 서로
+    # 모순된 요구를 하게 된다(2차 적대 리뷰).
     return {
         "map_admin": _docker_inspect(
             args.map_admin_container,
-            expected_revision=pair["admin"]["source_revision"],
+            expected_revision=map_admin_revision,
             expected_environment=args.scope,
             expected_image_digest=pair["runtime_image_digests"]["admin"],
             expected_compose_project=args.map_docker_project,
@@ -2038,7 +2134,7 @@ def _runtime_snapshot(
         ),
         "map_api": _docker_inspect(
             args.map_api_container,
-            expected_revision=pair["admin"]["source_revision"],
+            expected_revision=map_admin_revision,
             expected_environment=args.scope,
             expected_image_digest=pair["runtime_image_digests"]["api"],
             expected_compose_project=args.map_docker_project,
@@ -2046,7 +2142,7 @@ def _runtime_snapshot(
         ),
         "map_frontend": _docker_inspect(
             args.map_frontend_container,
-            expected_revision=pair["admin"]["source_revision"],
+            expected_revision=map_admin_revision,
             expected_environment=args.scope,
             expected_image_digest=pair["runtime_image_digests"]["frontend"],
             expected_compose_project=args.map_docker_project,
@@ -2523,7 +2619,7 @@ def _live(args: argparse.Namespace) -> int:
     if re.fullmatch(r"[0-9]+", impact_count) is None:
         raise AttestationError("M05 impact count must be a non-negative integer")
 
-    pair = _load_pair()
+    pair, pair_envelope_version = _load_pair()
     isolated_runtime: dict[str, object] | None = None
     if args.scope == "isolated":
         if (
@@ -2547,6 +2643,56 @@ def _live(args: argparse.Namespace) -> int:
         )
     elif args.isolated_runtime_provenance is not None:
         raise AttestationError("runtime provenance is only valid for isolated M05 attestation")
+
+    # Map source revision의 **단일 생산자**를 여기서 정한다.
+    #   v1  계약이 스스로 선언한 값(pin registry 선언의 사본)
+    #   v2  계약은 선언하지 않는다 — 격리 envelope(Manager가 pin registry에서 만든 것)
+    #       또는 명시 인자에서 온다. 둘 다 없으면 **조용히 넘어가지 않고** 무엇을
+    #       배선해야 하는지 이름을 대며 거절한다.
+    map_source_revision: str | None = pair["full"].get("source_revision")
+    if map_source_revision is None and isolated_runtime is not None:
+        map_source_revision = cast(str, isolated_runtime["map_source_revision"])
+    if map_source_revision is None and args.map_source_revision is not None:
+        map_source_revision = _commit(
+            args.map_source_revision, name="--map-source-revision"
+        )
+    if map_source_revision is None:
+        raise AttestationError(
+            "v2 pair envelope declares no Map source revision; pass "
+            "--map-source-revision (pin registry is the producer) or run with "
+            "isolated runtime provenance"
+        )
+    # Map runtime image digest의 **단일 생산자**를 여기서 정한다.
+    #   v1  계약이 스스로 선언한 값(pin registry 선언의 사본). 그 사본은 두 pinset
+    #       낡은 채 방치돼 있던 적이 있다.
+    #   v2  격리 실행은 Manager가 실측한 격리 envelope가, 그 밖의 scope는 pin
+    #       registry 파생값을 명시 인자로 받는다. 어느 쪽도 없으면 **조용히 검사를
+    #       건너뛰지 않고** 무엇을 배선해야 하는지 이름을 대며 거절한다.
+    if pair_envelope_version == 2 and not pair.get("runtime_image_digests"):
+        declared = {
+            "admin": args.map_admin_image_digest,
+            "api": args.map_api_image_digest,
+            "frontend": args.map_frontend_image_digest,
+        }
+        if any(value is None for value in declared.values()):
+            raise AttestationError(
+                "v2 pair envelope declares no Map runtime image digests; pass "
+                "--map-admin-image-digest/--map-api-image-digest/"
+                "--map-frontend-image-digest (pin registry is the producer) or run "
+                "with isolated runtime provenance"
+            )
+        for name, value in declared.items():
+            if not isinstance(value, str) or _DIGEST_RE.fullmatch(value) is None:
+                raise AttestationError(f"--map-{name}-image-digest is invalid")
+        pair["runtime_image_digests"] = dict(cast(dict[str, str], declared))
+    # 표면마다 **누가 그 revision을 만드는가**를 여기서 한 번 정하고, 아래의
+    # checkout 대조와 두 OpenAPI 함수는 그 결과만 쓴다.
+    surface_revisions = _surface_revisions(
+        pair,
+        version=pair_envelope_version,
+        map_source_revision=map_source_revision,
+        service_release_revision=_service_release_revision(),
+    )
     pinvi_image_digests = (
         cast(dict[str, str], isolated_runtime["pinvi_images"])
         if isolated_runtime is not None
@@ -2560,11 +2706,10 @@ def _live(args: argparse.Namespace) -> int:
     )
     _assert_clean_checkout(
         args.map_source_root,
-        expected_revision=pair["full"]["source_revision"],
-        allowed_revisions={
-            pair[name]["source_revision"]
-            for name in ("admin", "full", "service", "user")
-        },
+        expected_revision=map_source_revision,
+        # 표면별 revision이 서로 다를 수 있다(service는 릴리스 revision이다).
+        # checkout이 그 전부를 담고 있어야 blob을 읽을 수 있다.
+        allowed_revisions=set(surface_revisions.values()),
         label="Map source",
     )
     private_key = _load_private_key(
@@ -2574,6 +2719,7 @@ def _live(args: argparse.Namespace) -> int:
         args,
         pair=pair,
         source_revision=source_revision,
+        map_admin_revision=surface_revisions["admin"],
         pinvi_image_digests=pinvi_image_digests,
     )
     m04 = _read_m04_evidence(
@@ -2644,6 +2790,7 @@ def _live(args: argparse.Namespace) -> int:
         args,
         pair=pair,
         source_revision=source_revision,
+        map_admin_revision=surface_revisions["admin"],
         pinvi_image_digests=pinvi_image_digests,
     )
     _assert_runtime_snapshots_unchanged(runtime_initial, runtime_before_ui)
@@ -2790,20 +2937,25 @@ def _live(args: argparse.Namespace) -> int:
         args,
         pair=pair,
         source_revision=source_revision,
+        map_admin_revision=surface_revisions["admin"],
         pinvi_image_digests=pinvi_image_digests,
     )
     _assert_runtime_snapshots_unchanged(runtime_initial, runtime_after_ui)
 
-    source_openapi = _hash_source_openapi(args.map_source_root)
+    source_openapi = _hash_source_openapi(
+        args.map_source_root, expected=pair, revisions=surface_revisions
+    )
     runtime_map_openapi = _runtime_map_openapi(
         map_admin_url=args.map_admin_url,
         source_root=args.map_source_root,
         expected=pair,
+        revisions=surface_revisions,
     )
     runtime_after_openapi = _runtime_snapshot(
         args,
         pair=pair,
         source_revision=source_revision,
+        map_admin_revision=surface_revisions["admin"],
         pinvi_image_digests=pinvi_image_digests,
     )
     _assert_runtime_snapshots_unchanged(runtime_after_ui, runtime_after_openapi)
@@ -2978,6 +3130,13 @@ def _parser() -> argparse.ArgumentParser:
     live.add_argument("--evidence-dir", type=Path, required=True)
     live.add_argument("--private-key", type=Path, required=True)
     live.add_argument("--map-admin-url", required=True)
+    # v2 pair 계약은 Map revision도 runtime image digest도 선언하지 않는다. 격리
+    # 실행은 runtime provenance가 그 값을 싣고 오지만, 그 밖의 scope는 pin registry
+    # 파생값을 여기로 받아야 한다.
+    live.add_argument("--map-source-revision")
+    live.add_argument("--map-admin-image-digest")
+    live.add_argument("--map-api-image-digest")
+    live.add_argument("--map-frontend-image-digest")
     live.add_argument("--map-case-id", required=True)
     live.add_argument("--map-docker-project", required=True)
     live.add_argument("--map-admin-container", required=True)

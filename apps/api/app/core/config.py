@@ -1818,6 +1818,33 @@ class Settings(BaseSettings):
                     f"M05 activation receipt terminal binding is invalid: {field}"
                 )
 
+        # 네 revision 필드의 **형식**은 계약 버전과 무관하게 여기서 본다. 종전
+        # 주석은 "payload 스키마 검사가 그대로 한다"고 적었으나 그 검사는 키 집합만
+        # 본다 — v2에서 대조 상대가 사라진 세 필드는 형식조차 보증되지 않고 있었다.
+        for field in (
+            "map_admin_source_revision",
+            "map_full_source_revision",
+            "map_service_source_revision",
+            "map_user_source_revision",
+        ):
+            value = payload[field]
+            if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
+                _raise_redacted_settings_error(
+                    f"M05 activation receipt Map source revision is invalid: {field}"
+                )
+
+        # v2에서 admin·full·user는 **하나의 Map revision**에서 나온다(attestation
+        # `_surface_revisions`가 그렇게 만든다). 계약 사본이 사라진 자리에 그 사실을
+        # 결박해 둔다 — 없어지는 것은 두 번째 선언이지 검사가 아니다. service는
+        # 별도 계약이 정본이라 아래 루프가 그 값과 직접 대조한다.
+        if KOR_TRAVEL_MAP_M05_ADMIN_SOURCE_REVISION is None:
+            for field in ("map_full_source_revision", "map_user_source_revision"):
+                if payload[field] != payload["map_admin_source_revision"]:
+                    _raise_redacted_settings_error(
+                        "M05 activation receipt Map surface revision is not the pinned "
+                        f"Map revision: {field}"
+                    )
+
         for field, expected in (
             ("map_admin_openapi_sha256", KOR_TRAVEL_MAP_M05_ADMIN_OPENAPI_SHA256),
             ("map_full_openapi_sha256", KOR_TRAVEL_MAP_M05_FULL_OPENAPI_SHA256),
@@ -1829,14 +1856,14 @@ class Settings(BaseSettings):
             ("map_user_source_revision", KOR_TRAVEL_MAP_M05_USER_SOURCE_REVISION),
         ):
             if expected is None:
-                # v2 계약은 revision을 선언하지 않는다. 대조를 **건너뛰지 않는다** —
-                # 건너뛰면 v2가 검사를 통과시키는 것처럼 보인다. 생산자(pin registry가
-                # 낸 값을 Manager receipt로 전달)가 배선되기 전까지 활성화를 막는다.
-                _raise_redacted_settings_error(
-                    "M05 activation receipt Map pair field has no contract-side value "
-                    f"under a v2 pair envelope: {field}. Wire the pin-registry revision "
-                    "producer before activating."
-                )
+                # v2 계약은 Map revision을 선언하지 않는다 — 대조 상대가 사라지는 것이
+                # v2의 목적이다(`T-VN-PAIR-V2`, `AGENTS.md` DO NOT 15 이중 선언 제거).
+                #
+                # 이 값을 보호하는 것은 계약의 사본이 아니라 **서명 사슬**이다:
+                # pin registry → Manager가 유도 → Ed25519 서명 receipt → 여기서 서명 검증.
+                # 계약이 두 번째로 선언하던 것을 걷어낸 것이지 검사를 잃은 것이 아니다.
+                # 형식(40-hex)과 세 표면의 동일성은 바로 위 두 루프가 본다.
+                continue
             if payload[field] != expected:
                 _raise_redacted_settings_error(
                     f"M05 activation receipt Map pair field does not match: {field}"
@@ -1899,12 +1926,9 @@ class Settings(BaseSettings):
             ("map_frontend_image_digest", KOR_TRAVEL_MAP_M05_FRONTEND_IMAGE_DIGEST),
         ):
             if expected is None:
-                # 같은 이유로 fail-close한다 — v2 계약에는 runtime image digest가 없다.
-                _raise_redacted_settings_error(
-                    "M05 activation receipt Map image digest has no contract-side value "
-                    f"under a v2 pair envelope: {field}. Wire the pin-registry image "
-                    "digest producer before activating."
-                )
+                # 같은 이유다 — v2 계약에는 runtime image digest가 없고, 그 값의 생산자는
+                # Manager receipt(서명됨) 하나다. 형식 검증은 바로 위 루프가 한다.
+                continue
             if payload[field] != expected:
                 _raise_redacted_settings_error(
                     f"M05 activation receipt Map image digest does not match the pinned runtime: {field}"

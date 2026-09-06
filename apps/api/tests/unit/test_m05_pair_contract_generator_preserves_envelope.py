@@ -87,14 +87,9 @@ def test_the_consumer_now_reads_a_v2_envelope(
     """
     from app.core import config
 
-    committed = _committed()
-    v2 = {
-        "map": {
-            name: {key: value for key, value in surface.items() if key != "source_revision"}
-            for name, surface in committed["map"].items()
-        },
-        "version": 2,
-    }
+    v2 = _committed()
+    assert v2["version"] == 2, "커밋된 계약이 v2여야 이 테스트가 실제를 본다"
+    committed = v2
     monkeypatch.setattr(
         config, "_m05_pair_provenance_text", lambda: json.dumps(v2, ensure_ascii=False)
     )
@@ -108,22 +103,38 @@ def test_the_consumer_now_reads_a_v2_envelope(
     assert set(details) == {"admin", "full", "service", "user"}
 
 
-def test_the_consumer_still_reads_the_committed_v1_envelope(
+def test_the_consumer_still_reads_a_v1_envelope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """dual-read다 — v1을 계속 읽어야 한다. 커밋된 계약이 아직 v1이다."""
+    """dual-read의 나머지 절반 — v1도 계속 읽어야 한다.
+
+    커밋된 계약은 2026-09-07에 v2가 됐다(`T-VN-PAIR-V2` §3). 그래도 v1 경로를 지우지
+    않는다 — 롤백 경로이고, Manager도 같은 이유로 v1 분기를 §7까지 남긴다. 그래서
+    여기서는 커밋본이 아니라 **합성 v1 문서**로 고정한다.
+    """
 
     from app.core import config
 
     committed = _committed()
+    revision = "0" * 40
+    v1 = {
+        "map": {
+            name: {**surface, "source_revision": revision}
+            for name, surface in committed["map"].items()
+        },
+        "runtime_image_digests": {
+            name: "sha256:" + "0" * 64 for name in ("admin", "api", "frontend")
+        },
+        "version": 1,
+    }
     monkeypatch.setattr(
-        config, "_m05_pair_provenance_text", lambda: json.dumps(committed, ensure_ascii=False)
+        config, "_m05_pair_provenance_text", lambda: json.dumps(v1, ensure_ascii=False)
     )
     provenance, image_digests, _details, version = config._load_m05_pair_provenance()
     assert version == 1
     assert set(image_digests) == {"admin", "api", "frontend"}
     for name, entry in provenance.items():
-        assert entry[1] == committed["map"][name]["source_revision"], name
+        assert entry[1] == revision, name
 
 
 def test_an_unknown_envelope_version_is_still_rejected(
@@ -151,7 +162,13 @@ def test_a_v2_envelope_that_still_declares_a_revision_is_rejected(
     from app.core import config
 
     committed = _committed()
-    half = {"map": committed["map"], "version": 2}
+    half = {
+        "map": {
+            name: {**surface, "source_revision": "0" * 40}
+            for name, surface in committed["map"].items()
+        },
+        "version": 2,
+    }
     monkeypatch.setattr(
         config, "_m05_pair_provenance_text", lambda: json.dumps(half, ensure_ascii=False)
     )
