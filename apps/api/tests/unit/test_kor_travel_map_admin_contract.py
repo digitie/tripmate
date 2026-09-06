@@ -78,7 +78,14 @@ def test_m05_pair_admin_and_full_are_bound_to_the_admin_vendor() -> None:
         entry = map_pair[name]
         assert isinstance(entry, dict)
         assert entry["openapi_sha256"] == _SNAPSHOT_SHA256
-        assert entry["source_revision"] == _UPSTREAM_COMMIT
+        # v2 계약은 Map revision을 선언하지 않는다(`T-VN-PAIR-V2`). 그 값의 생산자는
+        # Manager pin registry 하나이고, 이 저장소에서 그것을 대신 붙드는 것은
+        # vendored 스냅샷 핀이다 — 계약이 아니라 그쪽과 결박한다.
+        assert "source_revision" not in entry, (
+            "계약이 Map revision을 다시 선언한다 — 그러면 Map의 문서 한 줄이 다시 "
+            "PinVi 커밋과 rebuild를 부른다"
+        )
+    assert _UPSTREAM_COMMIT, "스냅샷 핀이 비었다 — 재핀 시 함께 갱신하라"
 
 
 def test_manual_feature_provenance_exposes_separate_opaque_id_and_uuid() -> None:
