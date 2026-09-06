@@ -1568,30 +1568,39 @@ def _pair_provenance() -> dict[str, dict[str, str]]:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ReceiptError) as exc:
         raise ReceiptError("pair provenance file is invalid") from exc
     payload = _object(raw, name="pair provenance")
-    if (
-        set(payload) != {"map", "runtime_image_digests", "version"}
-        or type(payload["version"]) is not int
-        or payload["version"] != 1
-    ):
+    # v1은 surface마다 `source_revision`을, 최상위에 `runtime_image_digests`를 갖는다.
+    # 둘 다 pin registry/Manager receipt가 정본인 값의 두 번째 선언이라 v2가 걷어낸다
+    # (`T-VN-PAIR-V2`). 이 스크립트는 그 두 값을 쓰지 않으므로 봉투 판정만 넓힌다.
+    version = payload.get("version")
+    if version == 1:
+        expected_envelope = {"map", "runtime_image_digests", "version"}
+    elif version == 2:
+        expected_envelope = {"map", "version"}
+    else:
+        raise ReceiptError("pair provenance envelope is invalid")
+    if set(payload) != expected_envelope or type(payload["version"]) is not int:
         raise ReceiptError("pair provenance envelope is invalid")
     map_value = _object(payload["map"], name="pair provenance map")
     if set(map_value) != {"admin", "full", "service", "user"}:
         raise ReceiptError("pair provenance map inventory is invalid")
-    runtime_images = _object(
-        payload["runtime_image_digests"], name="pair provenance runtime image digests"
-    )
-    if set(runtime_images) != {"admin", "api", "frontend"}:
-        raise ReceiptError("pair provenance runtime image digest inventory is invalid")
+    if version == 1:
+        runtime_images = _object(
+            payload["runtime_image_digests"], name="pair provenance runtime image digests"
+        )
+        if set(runtime_images) != {"admin", "api", "frontend"}:
+            raise ReceiptError("pair provenance runtime image digest inventory is invalid")
     result: dict[str, dict[str, str]] = {}
     for name in ("admin", "full", "service", "user"):
         entry = _object(map_value.get(name), name=f"pair provenance {name}")
-        if set(entry) != {
+        expected_entry = {
             "openapi_sha256",
             "runtime_operation_contract_sha256",
             "source_canonical_sha256",
             "source_operation_contract_sha256",
-            "source_revision",
-        }:
+        }
+        if version == 1:
+            expected_entry = expected_entry | {"source_revision"}
+        if set(entry) != expected_entry:
             raise ReceiptError(f"pair provenance {name} schema is invalid")
         result[name] = {
             "openapi_sha256": _sha256(entry["openapi_sha256"], name=f"{name}.openapi_sha256"),
@@ -1607,7 +1616,15 @@ def _pair_provenance() -> dict[str, dict[str, str]]:
                 entry["source_operation_contract_sha256"],
                 name=f"{name}.source_operation_contract_sha256",
             ),
-            "source_revision": _commit(entry["source_revision"], name=f"{name}.source_revision"),
+            **(
+                {
+                    "source_revision": _commit(
+                        entry["source_revision"], name=f"{name}.source_revision"
+                    )
+                }
+                if version == 1
+                else {}
+            ),
         }
     result["runtime_image_digests"] = {
         name: _digest(runtime_images[name], name=f"runtime_image_digests.{name}")
@@ -2403,7 +2420,14 @@ def _map_pair(
             != expected[provenance_name]["source_canonical_sha256"]
             or artifact["surface_coverage_sha256"]
             != expected[provenance_name]["runtime_operation_contract_sha256"]
-            or artifact["source_revision"] != expected[provenance_name]["source_revision"]
+            # v1 계약은 Map revision을 스스로 선언해서 여기서 대조할 상대가 있었다.
+            # v2는 그 선언을 걷어냈고 정본은 evidence artifact 하나다 — 대조 상대가
+            # 사라지는 것이 v2의 목적이다. 형식 검증은 아래 `_commit`이 계속 한다.
+            or (
+                "source_revision" in expected[provenance_name]
+                and artifact["source_revision"]
+                != expected[provenance_name]["source_revision"]
+            )
         ):
             raise ReceiptError(f"Map runtime {provenance_name} OpenAPI is not bound to the pair")
         _commit(

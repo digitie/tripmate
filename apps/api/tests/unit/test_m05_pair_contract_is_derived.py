@@ -114,3 +114,53 @@ def test_generated_contract_declares_no_source_revision() -> None:
         assert derived_keys == set(_DIGEST_KEYS), name
         if "source_revision" in entry:
             assert entry["source_revision"] == committed["map"][name]["source_revision"], name
+
+def test_the_committed_contract_is_now_a_v2_envelope() -> None:
+    """커밋된 계약이 v2다 — Map revision의 두 번째 선언이 사라졌다.
+
+    `T-VN-PAIR-V2` §4. v1으로 되돌리거나 `source_revision`을 되살리면 여기서 red가
+    된다. 그 필드가 있으면 Map의 문서 한 줄이 다시 PinVi 커밋 → 새 pinset → rebuild를
+    부른다 — 2026-09-01 이후 그 재핀이 **12건**이었고 전부 rebuild를 끌고 왔으며,
+    그중 10건은 상류 admin OpenAPI가 바이트 동일했다.
+    """
+
+    committed = json.loads(_CONTRACT.read_text(encoding="utf-8"))
+    assert committed["version"] == 2, "계약 봉투가 v2가 아니다"
+    assert set(committed) == {"map", "version"}, (
+        f"v2 봉투에 없어야 할 최상위 키가 있다: {sorted(set(committed) - {'map', 'version'})}"
+    )
+    declared = sorted(
+        name for name, entry in committed["map"].items() if "source_revision" in entry
+    )
+    assert declared == [], (
+        f"계약이 Map revision을 다시 선언한다: {declared}. 그 값의 생산자는 Manager "
+        "runtime pin registry 하나여야 한다."
+    )
+
+
+def test_the_consumer_would_break_if_it_went_back_to_v1_only() -> None:
+    """소비자와 계약이 **한쪽만** 움직이면 깨져야 한다 (`T-VN-PAIR-V2` §4).
+
+    계약이 v2인 지금 `config.py`를 v1-only로 되돌리면 모듈 import가 죽는다. 그
+    조합은 요청 오류가 아니라 컨테이너 기동 실패이고, Manager 회전 preflight는 v2를
+    무조건 통과시키므로 회전 전에 잡지 못한다.
+    """
+
+    from app.core import config
+
+    committed = json.loads(_CONTRACT.read_text(encoding="utf-8"))
+    assert committed["version"] == 2
+
+    original = config._m05_pair_provenance_text
+    try:
+        config._m05_pair_provenance_text = lambda: json.dumps(committed)
+        # 현재 소비자는 v2를 읽는다.
+        _pair, images, _details, version = config._load_m05_pair_provenance()
+        assert version == 2 and images == {}
+    finally:
+        config._m05_pair_provenance_text = original
+
+    # v1-only 소비자를 흉내 낸다 — 봉투 키 집합을 v1으로 고정하면 v2 계약이 거부된다.
+    assert set(committed) != {"map", "runtime_image_digests", "version"}, (
+        "v2 계약이 v1 봉투 키 집합과 같아서는 안 된다 — 그러면 이 대비가 공허하다"
+    )
