@@ -115,6 +115,7 @@ def test_generated_contract_declares_no_source_revision() -> None:
         if "source_revision" in entry:
             assert entry["source_revision"] == committed["map"][name]["source_revision"], name
 
+
 def test_the_committed_contract_is_now_a_v2_envelope() -> None:
     """커밋된 계약이 v2다 — Map revision의 두 번째 선언이 사라졌다.
 
