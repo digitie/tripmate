@@ -493,9 +493,7 @@ def _load_m05_pair_provenance() -> tuple[
             entry, "source_operation_contract_sha256", r"[0-9a-f]{64}"
         )
         source_revision = (
-            _required_string(entry, "source_revision", r"[0-9a-f]{40}")
-            if version == 1
-            else None
+            _required_string(entry, "source_revision", r"[0-9a-f]{40}") if version == 1 else None
         )
         result[name] = (
             openapi_sha256,
